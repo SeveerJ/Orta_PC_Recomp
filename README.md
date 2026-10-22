@@ -1,4 +1,4 @@
-# JROrta — Panzer Dragoon Orta, recompiled for PC
+# Orta PC Recomp — Panzer Dragoon Orta, recompiled for PC
 
 A native Windows build of **Panzer Dragoon Orta** (original Xbox), made by
 statically recompiling the game's code to C and running it on a PC
