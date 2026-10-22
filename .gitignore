@@ -11,9 +11,13 @@ UDATA/
 *.afs
 
 # --- Generated from the game: recompiled code and disassembly ---
-orta/src/recomp/
-recomp_manual.c
-tools/disasm/output/
+orta/src/recomp/gen/
+**/tools/*/output/
+*.orig
+__pycache__/
+*.pyc
+xdvdfs.exe
+orta/src/orta.ico
 
 # --- Build output ---
 build/

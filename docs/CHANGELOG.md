@@ -16,6 +16,13 @@
 - **Depth:** added depth-range culling and polygon offset.
 - **Points and lines:** now drawn, via geometry shaders (in testing).
 
+### New
+- **Settings menu (F1, or Back + Start on the pad):** covers display, audio
+  and controller settings. The game pauses and mutes while it is open, and
+  changes are saved to settings.ini.
+- **Rumble:** the game's vibration now reaches the PC pad. Set it with
+  `Rumble` / `RumbleStrength` in settings.ini or in the menu.
+
 ### Audio
 - **Sound effects too loud and clipping:** effects mixdown halved, a soft
   limiter added, and an `SfxVolume` setting.
