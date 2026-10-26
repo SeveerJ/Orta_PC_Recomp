@@ -3200,6 +3200,7 @@ static void gpu_program_batch(void) { gpu_program_batch_x(0); }
  * For finding which draw is wrong when something sits in the wrong place
  * (Orta's wing membranes and hair, 19 Oct). */
 volatile long g_capture_req;
+volatile long g_capture_done;          /* GetTickCount when the last one was written */
 static void capture_draw(const Nv2aGpuState *st, const uint32_t *prog, uint32_t start,
                          const float *consts, const float (*v0)[4], uint32_t nu, uint32_t nt)
 {
@@ -3225,6 +3226,7 @@ static void capture_draw(const Nv2aGpuState *st, const uint32_t *prog, uint32_t 
             f = NULL;
         }
         fprintf(stderr, "[CAPTURE] frame %u written, %u draws\n", target, ndraw);
+        g_capture_done = (long)GetTickCount();
         fflush(stderr);
         return;
     }
@@ -3270,6 +3272,23 @@ static void capture_draw(const Nv2aGpuState *st, const uint32_t *prog, uint32_t 
                     v0 ? v0[a][0] : 0.f, v0 ? v0[a][1] : 0.f, v0 ? v0[a][2] : 0.f, v0 ? v0[a][3] : 0.f);
         else if (v0)
             fprintf(f, "  attr%u off | imm %g %g %g %g\n", a, v0[a][0], v0[a][1], v0[a][2], v0[a][3]);
+    }
+    if (v0 && nu > 1) {   /* every vertex, not just the first: ranges of each live attribute */
+        for (a = 0; a < NV_VERTEX_ATTRS && a < 16; a++) {
+            float lo[4], hi[4];
+            uint32_t k, c;
+            if (!(s_gpu.attr[a].size && s_gpu.attr[a].stride))
+                continue;
+            for (c = 0; c < 4; c++) lo[c] = hi[c] = v0[a][c];
+            for (k = 1; k < nu; k++)
+                for (c = 0; c < 4; c++) {
+                    float x = v0[k * NV2A_VSH_INPUTS + a][c];
+                    if (x < lo[c]) lo[c] = x;
+                    if (x > hi[c]) hi[c] = x;
+                }
+            fprintf(f, "  range attr%u x %g..%g y %g..%g z %g..%g w %g..%g\n", a,
+                    lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], lo[3], hi[3]);
+        }
     }
     if (v0 && start != 0xFFFFu) {
         Nv2aVshOutput o;

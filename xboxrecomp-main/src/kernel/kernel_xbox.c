@@ -9,6 +9,7 @@
  * EEPROM-based encryption on PC.
  */
 
+#include <stdio.h>
 #include "kernel.h"
 #include <string.h>
 #include <stdlib.h>
@@ -196,6 +197,34 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
             *(PULONG)Value = 0;
             if (Type) *Type = 4;
             if (ResultLength) *ResultLength = sizeof(ULONG);
+        }
+        break;
+
+    case 0x103:   /* XC_FACTORY_AV_REGION */
+    case 0x104:   /* XC_FACTORY_GAME_REGION */
+        /* Factory region settings (xemu's default EEPROM). Unhandled until
+         * 22 Oct, they read as 0 -- "no region" -- and Orta, a North American
+         * disc, seemed to balance itself for some other region: enemies and
+         * bosses with far too little health. Game region: 1 North America,
+         * 2 Japan, 4 rest of world (RECOMP_GAME_REGION overrides); AV region
+         * NTSC-M. */
+        if (ValueLength >= sizeof(ULONG)) {
+            ULONG v;
+            if (ValueIndex == 0x103) {
+                v = 0x00400100u;
+            } else {
+                const char *e = getenv("RECOMP_GAME_REGION");
+                v = e ? (ULONG)strtoul(e, NULL, 0) : 1u;
+            }
+            *(PULONG)Value = v;
+            if (Type) *Type = 4;
+            if (ResultLength) *ResultLength = sizeof(ULONG);
+            {
+                static int logged[2];
+                if (!logged[ValueIndex - 0x103]++)
+                    fprintf(stderr, "[REGION] %s region reported as 0x%08lX\n",
+                            ValueIndex == 0x103 ? "AV" : "game", (unsigned long)v);
+            }
         }
         break;
 

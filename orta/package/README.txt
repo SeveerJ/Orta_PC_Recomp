@@ -1,5 +1,5 @@
-PANZER DRAGOON ORTA - PC PLAYTEST BUILD
-=======================================
+PANZER DRAGOON ORTA - PC PLAYTEST BUILD (update 2)
+=================================================
 
 Thanks for testing! This is the original Xbox game translated to run
 natively on Windows. It is a work in progress, so please note anything
@@ -12,38 +12,41 @@ STARTING THE GAME
 
 CONTROLS
   An Xbox controller (or any XInput pad) works as the original pad.
+  Keyboard: arrows = D-pad, Enter = Start, Esc = Back, Z/X/A/S = A/B/X/Y,
+            Q/W = triggers, C/V = White/Black.
   Alt+Enter switches between fullscreen and a window.
+  F1 (or Back + Start on the pad) opens the settings menu.
   Close the window to quit (save in-game first!).
 
-SETTINGS (settings.ini - open it with Notepad)
-  Resolution   2160 = 4K (default), 1440 for a 1080p/1440p screen.
-               Lower it if the game runs slowly.
-  Fullscreen   1 = fullscreen (default), 0 = window.
-  Widescreen   1 = 16:9, 0 = original 4:3.
-  FrameRateCap 60 (the game is made for 60).
-  VSync        1 = no tearing (slightly more input lag).
-  Volume       0 to 100.
+SETTINGS MENU (F1)
+  The game pauses while it is open. Change the resolution, fullscreen,
+  widescreen, VSync, border crop, volume and sound effects level there.
+  Changes are saved to settings.ini when you close the menu; the
+  description on the right says whether one needs a restart.
 
 SAVES
   The game only saves when you choose to, at the end of each episode.
   Always say yes to the save screen after clearing an episode, or that
   episode will have to be played again. Saves go in game_files\UDATA -
-  back that folder up if you want to keep them.
+  back that folder up if you want to keep them. Your existing saves are
+  kept when you copy this update over the old folder.
 
 WHAT'S NEW IN THIS BUILD
-  - Every episode can now be played from start to finish.
-  - The opening movie and the other movies now show their picture.
-  - Widescreen: the black bars above and below the picture are gone.
-    The game now draws the full picture instead of zooming in.
+  - Enemy and boss health is now right (the game had been told it was
+    running on a console from another region and used easier settings).
+  - Water reflections now look like the original.
+  - Hair and wings sit in the right place.
+  - Episode 2 boss no longer flickers on its dark patches.
+  - Episode 3 boss: proper shadow, and it runs at full speed.
+  - Sound effects are no longer too loud or crackly (see SfxVolume).
+  - Particle and sparkle effects that were missing are now drawn.
+  - New settings menu (F1).
 
 KNOWN ISSUES
-  - Water reflections (the river in Episode 2) do not look right yet.
-    Purely cosmetic.
-  - Inside some vents the background can show as a flat brown area
-    until you come out again.
-  - Hair and wings can sit slightly lower than they should.
-  - Short stutters when lots of enemies appear, and some slowdown
-    during the Episode 3 boss.
+  - Episode 3: the octopus enemy's charged laser does not show yet.
+  - Controller rumble does not work yet.
+  - Inside some vents the background can show as a flat brown area.
+  - Short stutters when lots of new enemies load in.
   - Rarely the game may freeze just before the Episode 8 boss. If that
     happens, close it and restart from your last save.
 

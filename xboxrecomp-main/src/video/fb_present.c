@@ -303,15 +303,10 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
                 fb_set_fullscreen(h, !s_fullscreen);
             return 0;
         }
-        if (w == VK_F9 && !(l & (1 << 30))) {     /* test modes: culling / depth range */
-            extern volatile long g_water_mode;
-            g_water_mode = (g_water_mode + 1) % 4;
-            fprintf(stderr, "[TESTMODE] %ld\n", g_water_mode);
-            fflush(stderr);
-            return 0;
-        }
         if (w == VK_F11 && !(l & (1 << 30))) {    /* capture one frame's draws */
             extern volatile long g_capture_req;
+            fprintf(stderr, "[KEY] F11 (capture %s)\n", g_capture_req ? "already running" : "requested");
+            fflush(stderr);
             if (!g_capture_req)
                 g_capture_req = 1;
             return 0;
@@ -536,13 +531,14 @@ static DWORD WINAPI fb_thread(LPVOID unused)
                 LONG f = s_flips;
                 wchar_t tb[128];
                 extern uint32_t nv2a_flip_count(void);   /* frames the game has shown */
-                extern volatile long g_water_mode;
-                static const wchar_t *tm[4] = { L"", L" | F9: culling off",
-                    L" | F9: depth range off", L" | F9: both off" };
+                extern volatile long g_capture_req, g_capture_done;
+                const wchar_t *cap = g_capture_req ? L" | capturing..."
+                    : (g_capture_done && GetTickCount() - (DWORD)g_capture_done < 4000)
+                    ? L" | FRAME CAPTURED" : L"";
                 _snwprintf(tb, 127, L"%ls | frame %u | FPS: %.1f | draws: %ld%ls", s_title,
                            (unsigned)nv2a_flip_count(),
                            t0 ? (f - f0) * 1000.0 / (now - t0) : 0.0,
-                           (long)s_frame_draws, tm[g_water_mode & 3]);
+                           (long)s_frame_draws, cap);
                 tb[127] = 0;
                 SetWindowTextW(hwnd, tb);
                 t0 = now; f0 = f;

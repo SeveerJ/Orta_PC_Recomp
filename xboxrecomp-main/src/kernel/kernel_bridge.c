@@ -3426,19 +3426,32 @@ static void bridge_write_iostatus(uint32_t ios_va, NTSTATUS status, uint32_t inf
 #define BRIDGE_HANDLE_MAX  16384
 static HANDLE s_handle_table[BRIDGE_HANDLE_MAX];
 
+/* One lock for the table: the title opens files, events and threads from
+ * several threads at once, and without it two of them could take the same
+ * free slot -- one handle silently replaced by the other. Orta froze at
+ * random at a stage-end cutscene that way (26 Oct): the movie player's
+ * decoder thread was created while a loader thread was opening files, its
+ * token came to name a file, and resuming it failed with "invalid handle",
+ * so the decoder never ran. */
+static SRWLOCK s_handle_lock = SRWLOCK_INIT;
+
 static uint32_t bridge_handle_token(HANDLE h)
 {
     int i;
+    uint32_t tok = 0;
     if (!h || h == INVALID_HANDLE_VALUE) return 0;
-    for (i = 1; i < BRIDGE_HANDLE_MAX; i++)
-        if (s_handle_table[i] == h) return BRIDGE_HANDLE_TAG | (uint32_t)i;
-    for (i = 1; i < BRIDGE_HANDLE_MAX; i++)
+    AcquireSRWLockExclusive(&s_handle_lock);
+    for (i = 1; i < BRIDGE_HANDLE_MAX && !tok; i++)
+        if (s_handle_table[i] == h) tok = BRIDGE_HANDLE_TAG | (uint32_t)i;
+    for (i = 1; i < BRIDGE_HANDLE_MAX && !tok; i++)
         if (s_handle_table[i] == NULL) {
             s_handle_table[i] = h;
-            return BRIDGE_HANDLE_TAG | (uint32_t)i;
+            tok = BRIDGE_HANDLE_TAG | (uint32_t)i;
         }
-    fprintf(stderr, "  [BRIDGE] handle table full\n");
-    return 0;
+    ReleaseSRWLockExclusive(&s_handle_lock);
+    if (!tok)
+        fprintf(stderr, "  [BRIDGE] handle table full\n");
+    return tok;
 }
 
 /* Store a native HANDLE into a 32-bit Xbox memory slot (as a token). */
@@ -3494,8 +3507,11 @@ static HANDLE bridge_take_handle(uint32_t token)
     if ((token & 0xFF000000u) == BRIDGE_HANDLE_TAG) {
         uint32_t i = token & BRIDGE_HANDLE_MASK;
         if (i > 0 && i < BRIDGE_HANDLE_MAX) {
-            HANDLE h = s_handle_table[i];
+            HANDLE h;
+            AcquireSRWLockExclusive(&s_handle_lock);
+            h = s_handle_table[i];
             s_handle_table[i] = NULL;
+            ReleaseSRWLockExclusive(&s_handle_lock);
             return h;
         }
     }

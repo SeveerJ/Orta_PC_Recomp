@@ -122,6 +122,13 @@ if ($LASTEXITCODE -ne 0) {
     Fail 'Build'
 }
 Write-Host 'Build OK'
+# build_only.flag (made by Claude): stop here, without starting the game.
+$buildOnly = Join-Path $PSScriptRoot 'build_only.flag'
+if ((Test-Path $buildOnly) -and ((Get-Content $buildOnly -Raw).Trim() -eq '1')) {
+    Remove-Item $buildOnly -ErrorAction SilentlyContinue
+    Write-Host 'Build only: the game was not started.'
+    exit 0
+}
 
 # ---- 4. Run ------------------------------------------------------------------
 Step "Running the game (up to $watchdogSeconds s)"
