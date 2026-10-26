@@ -4,13 +4,11 @@
 - **Episode 3, octopus:** short frame dips while new data streams in.
 - **Vents:** the background can show as a flat brown area until you leave.
   Recent fixes may have cleared this; it needs checking.
-- **Installed copy starts slowly:** the game built by `OrtaPC_Setup.exe` sits
-  in Task Manager for minutes before its window opens. The engine itself is up
-  in under a second once it starts logging, so the wait comes earlier (before
-  the kernel layer starts). Not yet diagnosed: candidates are Windows Defender
-  scanning the new unsigned exe, symbol loading at start-up (`SymInitialize`)
-  in the clang-built exe, or the Xbox memory layout set-up behaving
-  differently under the clang/MinGW build. It hasn't been seen with the Visual Studio dev build.
+- **First start after installing is slow:** the first launch of a freshly
+  installed copy can sit in Task Manager for several minutes before its window
+  opens; later launches are much faster. Most likely Windows scanning the newly
+  built, unsigned exe the first time it runs (the delay is before the engine
+  starts), plus the shader cache being empty on the first run.
 - **Episode 8:** the game may rarely freeze just before the boss. Restart from
   your last save.
 
