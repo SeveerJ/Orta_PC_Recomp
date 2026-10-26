@@ -33,7 +33,28 @@ no recompiled game code, no textures. You supply files from your own disc.
 | `orta/third_party/imgui/` | Dear ImGui 1.91.9 (MIT) |
 | `docs/` | Roadmap, known issues and changelog |
 
-## Building
+## Installing
+
+Download `OrtaPC_Setup.exe` from the Releases page and run it.
+
+- It looks for your Panzer Dragoon Orta disc image (`.iso`) by itself, in
+  Downloads, Desktop, Documents, Videos, your user folder and then each drive.
+  If it doesn't find it, press **Disc image...** (or **Folder...** for an
+  unpacked copy with `default.xbe` in it).
+- It checks the disc is Panzer Dragoon Orta, North American release.
+- It downloads Python, the capstone disassembler and the llvm-mingw compiler
+  (about 300 MB) into `%LOCALAPPDATA%\Orta PC Setup`, translates and compiles
+  the game (20-30 minutes), installs it where you chose, and then deletes that
+  work folder.
+- The install folder gets `setup_log.txt`; send it along with any problem
+  report. If Setup stops part-way, run it again: it reuses what it already
+  downloaded and compiled.
+
+To make the installer yourself: `installer/build_setup.sh` builds the
+`Setup.exe` stub (clang + lld-link, no C runtime), and
+`python installer/make_release.py OrtaPC_Setup.exe` appends the sources to it.
+
+## Building by hand
 
 You need Windows 10/11 with Visual Studio 2022 (Desktop C++), CMake 3.20+ and
 Python 3.
