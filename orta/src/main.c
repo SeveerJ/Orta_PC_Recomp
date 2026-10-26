@@ -351,7 +351,7 @@ static const char *k_settings_default =
 ";   480, 960, 1440, 1920, 2400 or 2880 (1x-6x). Other values round up\r\n"
 ";   (1080 -> 1440, 2160 -> 2400). The picture is then scaled to fit the\r\n"
 ";   screen: 1440 for a 1080p/1440p monitor, 2160 for 4K.\r\n"
-"Resolution = 2160\r\n"
+"Resolution = 480\r\n"
 "; 1 = 16:9 widescreen, 0 = original 4:3.\r\n"
 "Widescreen = 1\r\n"
 "; Trim the black border Xbox games leave for old TVs, in percent per side (0-20).\r\n"

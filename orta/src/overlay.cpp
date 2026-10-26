@@ -76,7 +76,7 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
 
 static void cfg_load(void)
 {
-    s_cfg.scale      = clampi(env_int("RECOMP_GPU_SCALE", 5), 1, 6);
+    s_cfg.scale      = clampi(env_int("RECOMP_GPU_SCALE", 1), 1, 6);
     s_cfg.widescreen = env_int("RECOMP_WIDESCREEN", 1) != 0;
     s_cfg.fullscreen = xbox_FramebufferIsFullscreen();
     s_cfg.winh       = clampi(env_int("RECOMP_WINDOW_HEIGHT", 720), 240, 4320);
