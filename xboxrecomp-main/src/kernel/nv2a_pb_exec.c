@@ -405,7 +405,8 @@ static void note_texture_use(void)
 {
     int i;
 
-    if (!s_gpu.texs[0].valid)
+    /* A per-draw search of the texture table, only for the report. */
+    if (!s_gpu.texs[0].valid || recomp_diag_quiet())
         return;
     for (i = 0; i < s_tex_use_count; i++) {
         if (s_tex_use[i].offset == s_gpu.texs[0].offset
@@ -5213,6 +5214,8 @@ uint32_t nv2a_flip_count(void) { return s_gpu.flips; }
 
 void nv2a_pb_exec_report(void)
 {
+    if (recomp_diag_quiet())
+        return;
     peek_addresses();
     peek_chain();
     if (getenv("RECOMP_FIND_NAN")) {

@@ -1075,6 +1075,12 @@ VOID    __stdcall xbox_Unknown_42(void);
 
 void xbox_log(int level, const char* subsystem, const char* fmt, ...);
 
+/* 1 when nobody can see the diagnostic output: the game was started normally
+ * (stderr goes nowhere) rather than by a script that keeps it. Diagnostics
+ * that cost time while playing (per-draw tallies, periodic reports) skip
+ * their work then. RECOMP_QUIET=0 or 1 overrides. */
+int recomp_diag_quiet(void);
+
 #ifdef _DEBUG
 #define XBOX_TRACE(subsystem, fmt, ...) xbox_log(XBOX_LOG_TRACE, subsystem, fmt, ##__VA_ARGS__)
 #else

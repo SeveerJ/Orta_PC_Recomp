@@ -961,11 +961,107 @@ static void release(IUnknown *u)
 
 /* ── Init ──────────────────────────────────────────────────────────────── */
 
+/* ── Shader cache on disk ───────────────────────────────────────────────
+ * Compiling HLSL at OPTIMIZATION_LEVEL3 takes from tens of milliseconds to
+ * over a second per shader, and the specialised combiner shaders are built
+ * while the game runs (on a worker thread, but it still competes with the
+ * game for the CPU, and the general shader is slower on the GPU until they
+ * are ready). The compiled bytecode does not depend on the PC, so it is kept
+ * in %LOCALAPPDATA%\xboxrecomp\shader_cache, named by a hash of everything
+ * that goes into the compile. Off with RECOMP_SHADER_CACHE=0. */
+typedef HRESULT (WINAPI *PfnCreateBlob)(SIZE_T, ID3DBlob **);
+static PfnCreateBlob s_create_blob;
+static char s_cache_dir[MAX_PATH];
+static int s_cache_on = -1;
+#define SHADER_CACHE_VERSION 1u
+
+static uint64_t fnv64(uint64_t h, const void *p, size_t n)
+{
+    const unsigned char *b = (const unsigned char *)p;
+    while (n--) { h ^= *b++; h *= 1099511628211ull; }
+    return h;
+}
+
+static int cache_ready(void)
+{
+    if (s_cache_on < 0) {
+        const char *e = getenv("RECOMP_SHADER_CACHE");
+        char base[MAX_PATH];
+        DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", base, sizeof base);
+        s_cache_on = 0;
+        if (!(e && *e == '0') && s_create_blob && n && n < sizeof base - 40) {
+            snprintf(s_cache_dir, sizeof s_cache_dir, "%s\\xboxrecomp", base);
+            CreateDirectoryA(s_cache_dir, NULL);
+            snprintf(s_cache_dir, sizeof s_cache_dir, "%s\\xboxrecomp\\shader_cache", base);
+            CreateDirectoryA(s_cache_dir, NULL);
+            s_cache_on = 1;
+        }
+    }
+    return s_cache_on;
+}
+
+static void cache_path(char *out, size_t cap, const char *src, size_t len,
+                       const char *entry, const char *target, uint64_t *hash)
+{
+    uint64_t h = 14695981039346656037ull;
+    unsigned v = SHADER_CACHE_VERSION;
+    h = fnv64(h, &v, sizeof v);
+    h = fnv64(h, entry, strlen(entry) + 1);
+    h = fnv64(h, target, strlen(target) + 1);
+    h = fnv64(h, &len, sizeof len);
+    h = fnv64(h, src, len);
+    *hash = h;
+    snprintf(out, cap, "%s\\%016llx.cso", s_cache_dir, (unsigned long long)h);
+}
+
+/* File: 8-byte hash, 4-byte size, then the bytecode. */
+static ID3DBlob *cache_load(const char *path, uint64_t hash)
+{
+    HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    ID3DBlob *b = NULL;
+    uint64_t h = 0; uint32_t n = 0; DWORD got = 0;
+    if (f == INVALID_HANDLE_VALUE) return NULL;
+    if (ReadFile(f, &h, 8, &got, NULL) && got == 8 && h == hash &&
+        ReadFile(f, &n, 4, &got, NULL) && got == 4 && n && n < (64u << 20) &&
+        SUCCEEDED(s_create_blob(n, &b))) {
+        if (!ReadFile(f, ID3D10Blob_GetBufferPointer(b), n, &got, NULL) || got != n) {
+            ID3D10Blob_Release(b);
+            b = NULL;
+        }
+    }
+    CloseHandle(f);
+    return b;
+}
+
+static void cache_store(const char *path, uint64_t hash, ID3DBlob *b)
+{
+    char tmp[MAX_PATH + 16];
+    uint32_t n = (uint32_t)ID3D10Blob_GetBufferSize(b);
+    DWORD w;
+    HANDLE f;
+    BOOL ok;
+    snprintf(tmp, sizeof tmp, "%s.%lu.tmp", path, (unsigned long)GetCurrentThreadId());
+    f = CreateFileA(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    if (f == INVALID_HANDLE_VALUE) return;
+    ok = WriteFile(f, &hash, 8, &w, NULL) && WriteFile(f, &n, 4, &w, NULL) &&
+         WriteFile(f, ID3D10Blob_GetBufferPointer(b), n, &w, NULL) && w == n;
+    CloseHandle(f);
+    if (!ok || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) DeleteFileA(tmp);
+}
+
 static ID3DBlob *compile_src(PfnCompile fn, const char *src, size_t len,
                              const char *entry, const char *target)
 {
     ID3DBlob *code = NULL, *err = NULL;
-    HRESULT hr = fn(src, len, "nv2a_gpu.hlsl", NULL, NULL,
+    char path[MAX_PATH + 32];
+    uint64_t hash = 0;
+    HRESULT hr;
+    if (cache_ready()) {
+        cache_path(path, sizeof path, src, len, entry, target, &hash);
+        code = cache_load(path, hash);
+        if (code) return code;
+    }
+    hr = fn(src, len, "nv2a_gpu.hlsl", NULL, NULL,
                     entry, target, (1u << 15) /* OPTIMIZATION_LEVEL3 */, 0,
                     &code, &err);
     if (FAILED(hr)) {
@@ -977,6 +1073,7 @@ static ID3DBlob *compile_src(PfnCompile fn, const char *src, size_t len,
         return NULL;
     }
     REL(err);
+    if (s_cache_on > 0 && code) cache_store(path, hash, code);
     return code;
 }
 
@@ -1086,6 +1183,7 @@ static int gpu_init(void)
     if (!dc) dc = LoadLibraryA("d3dcompiler_46.dll");
     if (!dc) dc = LoadLibraryA("d3dcompiler_43.dll");
     comp = dc ? (PfnCompile)(void *)GetProcAddress(dc, "D3DCompile") : NULL;
+    s_create_blob = dc ? (PfnCreateBlob)(void *)GetProcAddress(dc, "D3DCreateBlob") : NULL;
     if (!create || !comp) {
         fprintf(stderr, "  [GPU11] %s missing -- software renderer\n",
                 create ? "D3DCompile (d3dcompiler_47.dll)" : "D3D11CreateDevice");

@@ -53,6 +53,22 @@ static const char* xbox_log_level_str(int level)
     }
 }
 
+int recomp_diag_quiet(void)
+{
+    static int quiet = -1;
+    if (quiet < 0) {
+        const char *e = getenv("RECOMP_QUIET");
+        if (e && *e) {
+            quiet = *e != '0';
+        } else {
+            HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+            quiet = (h == NULL || h == INVALID_HANDLE_VALUE ||
+                     GetFileType(h) == FILE_TYPE_UNKNOWN);
+        }
+    }
+    return quiet;
+}
+
 void xbox_log(int level, const char* subsystem, const char* fmt, ...)
 {
     va_list args;
@@ -77,7 +93,10 @@ void xbox_log(int level, const char* subsystem, const char* fmt, ...)
     va_end(args);
 
     fprintf(out, "\n");
-    fflush(out);
+    /* Flushing every line is a disk write per line; warnings and errors are
+     * the ones that must survive a crash, the rest can wait for the buffer. */
+    if (level <= XBOX_LOG_WARN)
+        fflush(out);
 
     if (g_log_cs_init)
         LeaveCriticalSection(&g_log_cs);
