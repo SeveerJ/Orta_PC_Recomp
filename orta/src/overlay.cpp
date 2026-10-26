@@ -147,6 +147,8 @@ static void cfg_save(void)
         fclose(f);
     }
 
+    /* The launcher's own choice survives the rewrite. */
+    int launcher_show = (int)GetPrivateProfileIntA("Launcher", "ShowOnStart", 0, path);
     f = fopen(path, "wb");
     if (!f) {
         free(adv);
@@ -185,10 +187,15 @@ static void cfg_save(void)
         "; 1 = the pad rumbles when the game asks it to.\r\n"
         "Rumble = %d\r\n"
         "; 0 to 100.\r\n"
-        "RumbleStrength = %d\r\n",
+        "RumbleStrength = %d\r\n"
+        "\r\n"
+        "[Launcher]\r\n"
+        "; 1 = show the settings window every time the game starts. Holding\r\n"
+        ";   Shift while starting the game shows it once.\r\n"
+        "ShowOnStart = %d\r\n",
         s_cfg.scale * 480, s_cfg.widescreen, s_cfg.cropx, s_cfg.cropy,
         s_cfg.fullscreen, s_cfg.winh, s_cfg.fps_cap, s_cfg.vsync,
-        s_cfg.volume, s_cfg.sfx, s_cfg.rumble, s_cfg.rumble_str);
+        s_cfg.volume, s_cfg.sfx, s_cfg.rumble, s_cfg.rumble_str, launcher_show);
     if (adv)
         fprintf(f, "\r\n%s", adv);
     fclose(f);

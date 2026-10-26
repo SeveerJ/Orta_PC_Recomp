@@ -53,6 +53,7 @@ file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
 set(GAME_SOURCES
     src/main.c
     src/recomp_manual.c
+    src/launcher.c
     src/orta.rc          # application icon (src/orta.ico)
     # Add game-specific sources here, e.g.:
     # src/asset_loader.c
@@ -86,6 +87,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     dxgi
     dxguid
     xinput
+    comctl32
     winmm
     # Lets the fault handler resolve the host RIP back to the generated
     # function's symbol, i.e. to the guest function that faulted.

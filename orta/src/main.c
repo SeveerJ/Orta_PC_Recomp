@@ -30,6 +30,7 @@
  *   Kernel imports: ??
  */
 
+#include "launcher.h"
 #include <windows.h>
 #include <dbghelp.h>
 #include <stdio.h>
@@ -519,6 +520,13 @@ static void load_settings(void)
     if (slash)
         slash[1] = 0;
     snprintf(path, sizeof path, "%ssettings.ini", dir);
+    {   /* write the defaults first, so the launcher has a file to edit */
+        FILE *f = fopen(path, "rb");
+        if (f) fclose(f);
+        else if ((f = fopen(path, "wb")) != NULL) { fputs(k_settings_default, f); fclose(f); }
+    }
+    if (!launcher_maybe_run(path))
+        ExitProcess(0);
     load_ini(path, 1);
     snprintf(path, sizeof path, "%sengine.ini", dir);
     load_ini(path, 0);

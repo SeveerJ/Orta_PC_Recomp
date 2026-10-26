@@ -53,7 +53,7 @@ RUNTIME_SOURCES = {
 
 LIBS = ("d3d11 dxgi dxguid d3dcompiler_47 xinput1_4 winmm xaudio2_8 ole32 oleaut32 "
         "mfplat mfreadwrite mfuuid mf bcrypt dbghelp user32 gdi32 shell32 "
-        "advapi32 uuid kernel32").split()
+        "advapi32 uuid comctl32 kernel32").split()
 
 # MSVC built this code until now. These keep clang from treating what MSVC
 # merely warned about as errors, and from optimising on assumptions the
@@ -184,7 +184,7 @@ def compile_all(cc_dir, gen, objdir, jobs):
     for d, names in RUNTIME_SOURCES.items():
         for n in names.split():
             jobs_list.append((clang, C_FLAGS + inc, os.path.join(src, d, n + ".c")))
-    game_c = [os.path.join(ORTA, "src", "main.c"), os.path.join(ORTA, "src", "recomp_manual.c")]
+    game_c = [os.path.join(ORTA, "src", n) for n in ("main.c", "recomp_manual.c", "launcher.c")]
     game_c += sorted(os.path.join(gen, f) for f in os.listdir(gen) if f.endswith(".c"))
     for f in game_c:
         jobs_list.append((clang, C_FLAGS + inc + game_inc + ["-include", extra], f))
