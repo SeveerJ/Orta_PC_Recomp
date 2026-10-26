@@ -43,12 +43,9 @@ WHAT'S NEW IN THIS BUILD
   - New settings menu (F1).
 
 KNOWN ISSUES
-  - Episode 3: the octopus enemy's charged laser does not show yet.
-  - Controller rumble does not work yet.
-  - Inside some vents the background can show as a flat brown area.
+  - Episode 3: the octopus enemy's charged attack shows its hit marks near
+    the octopus instead of up front on the screen.
   - Short stutters when lots of new enemies load in.
-  - Rarely the game may freeze just before the Episode 8 boss. If that
-    happens, close it and restart from your last save.
 
 REPORTING PROBLEMS
   For a crash, freeze or glitch, note roughly where it happened and

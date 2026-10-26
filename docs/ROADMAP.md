@@ -2,16 +2,19 @@
 
 In priority order:
 
-1. **Octopus laser (Episode 3).** Its charged attack doesn't render. Points and
-   lines were never drawn; geometry-shader support has been added and is
-   awaiting a test.
-2. **Rumble.** Built; awaiting a test.
-3. **Settings menu.** Built; awaiting a test.
-4. **Existing bugs.** Brown void in vents, a possible freeze before the Episode 8
-   boss, octopus loading stutters, and the playtest issue list.
-5. **Texture packs.** Hash-based dumping and replacement, including high-res
-   replacements.
-6. **Mouse aim** (maybe). The mouse acts as a virtual stick, with a possible
-   direct-aim mode.
+1. **Speed check.** A report that the game runs a little fast; compare
+   against original Xbox footage.
+2. **Octopus hit effect (Episode 3).** The red hit marks from its charged
+   attack appear near the octopus instead of in front of the player.
+3. **Performance on handhelds.** Check the ROG Ally at the new 480 default;
+   profile if it still lags.
+4. **Before going public:** rewrite the few translated lines in
+   `recomp_manual.c`; an icon we're free to use.
+5. **Launcher styling** with art from the player's own disc.
+6. **Texture packs.** Hash-based dumping and replacement.
+7. **Mouse aim** (maybe).
+
+Done: settings menu, launcher, rumble, Windows installer, Episode 3 freeze,
+enemy health, vents, Episode 8 freeze.
 
 Also: GitHub release preparation (licence and notice audit, build docs).
