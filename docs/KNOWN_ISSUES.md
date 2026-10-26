@@ -10,8 +10,7 @@
   the kernel layer starts). Not yet diagnosed: candidates are Windows Defender
   scanning the new unsigned exe, symbol loading at start-up (`SymInitialize`)
   in the clang-built exe, or the Xbox memory layout set-up behaving
-  differently under the clang/MinGW build. The Visual Studio dev build does
-  not do this.
+  differently under the clang/MinGW build. It hasn't been seen with the Visual Studio dev build.
 - **Episode 8:** the game may rarely freeze just before the boss. Restart from
   your last save.
 
