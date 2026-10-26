@@ -23,6 +23,7 @@
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "overlay.h"
+#include "launcher.h"
 
 /* ── Runtime hooks and live settings (src/kernel, src/video, src/apu) ── */
 extern "C" {
@@ -45,7 +46,7 @@ void orta_rumble_pulse(float strength);
 
 /* ── Settings ────────────────────────────────────────────────────────── */
 typedef struct {
-    int scale;          /* 1..6: render height = 480 * scale */
+    int res;            /* render resolution choice, see launcher.h */
     int widescreen;
     int fullscreen;
     int winh;           /* window height when not fullscreen */
@@ -76,7 +77,15 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
 
 static void cfg_load(void)
 {
-    s_cfg.scale      = clampi(env_int("RECOMP_GPU_SCALE", 1), 1, 6);
+    {
+        const char *rc = getenv("RECOMP_RES_CHOICE");
+        char b[16];
+        if (!rc) {             /* scale set directly (test runs): its height */
+            snprintf(b, sizeof b, "%d", clampi(env_int("RECOMP_GPU_SCALE", 1), 1, 6) * 480);
+            rc = b;
+        }
+        s_cfg.res = orta_res_index(rc);
+    }
     s_cfg.widescreen = env_int("RECOMP_WIDESCREEN", 1) != 0;
     s_cfg.fullscreen = xbox_FramebufferIsFullscreen();
     s_cfg.winh       = clampi(env_int("RECOMP_WINDOW_HEIGHT", 720), 240, 4320);
@@ -158,11 +167,11 @@ static void cfg_save(void)
         "; Panzer Dragoon Orta - settings. Edit with Notepad, or press F1 in the game.\r\n"
         "\r\n"
         "[Display]\r\n"
-        "; Height the game is drawn at, in steps of the original 480 lines:\r\n"
-        ";   480, 960, 1440, 1920, 2400 or 2880 (1x-6x). Other values round up\r\n"
-        ";   (1080 -> 1440, 2160 -> 2400). The picture is then scaled to fit the\r\n"
-        ";   screen: 1440 for a 1080p/1440p monitor, 2160 for 4K.\r\n"
-        "Resolution = %d\r\n"
+        "; Render resolution:\r\n"
+        ";   480 (the original, fastest), 720, 1080, 1440, 2160 or Native (your\r\n"
+        ";   screen's). The game is drawn at the next whole multiple of 480 lines\r\n"
+        ";   (720 -> 960, 1080 and 1440 -> 1440, 2160 -> 2400), then fitted to the screen.\r\n"
+        "Resolution = %s\r\n"
         "; 1 = 16:9 widescreen, 0 = original 4:3.\r\n"
         "Widescreen = %d\r\n"
         "; Trim the black border Xbox games leave for old TVs, in percent per side (0-20).\r\n"
@@ -193,7 +202,7 @@ static void cfg_save(void)
         "; 1 = show the settings window every time the game starts. Holding\r\n"
         ";   Shift while starting the game shows it once.\r\n"
         "ShowOnStart = %d\r\n",
-        s_cfg.scale * 480, s_cfg.widescreen, s_cfg.cropx, s_cfg.cropy,
+        orta_res_value(s_cfg.res), s_cfg.widescreen, s_cfg.cropx, s_cfg.cropy,
         s_cfg.fullscreen, s_cfg.winh, s_cfg.fps_cap, s_cfg.vsync,
         s_cfg.volume, s_cfg.sfx, s_cfg.rumble, s_cfg.rumble_str, launcher_show);
     if (adv)
@@ -546,21 +555,27 @@ static const char *k_next = "Takes effect the next time you start the game.";
 /* ── Pages ───────────────────────────────────────────────────────────── */
 static void page_display(void)
 {
-    static const char *res[] = { "480 (1x)", "960 (2x)", "1440 (3x)", "1920 (4x)",
-                                 "2400 (5x)", "2880 (6x)" };
     static const char *winh[] = { "540", "720", "900", "1080", "1440" };
     static const int winh_v[] = { 540, 720, 900, 1080, 1440 };
     int i, wi = 1;
 
     row("Render resolution");
     if (s_focus_first) { ImGui::SetKeyboardFocusHere(); s_focus_first = 0; }
-    i = s_cfg.scale - 1;
-    if (ImGui::Combo("##res", &i, res, 6))
-        s_cfg.scale = i + 1;
+    {
+        static char labels[ORTA_RES_COUNT][48];
+        static const char *res[ORTA_RES_COUNT];
+        for (i = 0; i < ORTA_RES_COUNT; i++) {
+            orta_res_label(i, s_cfg.widescreen, labels[i], sizeof labels[i]);
+            res[i] = labels[i];
+        }
+        i = s_cfg.res;
+        if (ImGui::Combo("##res", &i, res, ORTA_RES_COUNT))
+            s_cfg.res = i;
+    }
     help("Render resolution",
-         "How many lines the game is drawn at, in steps of the original 480. "
-         "Higher is sharper but slower. 1440 suits a 1080p or 1440p screen; "
-         "2400 suits 4K. Lower it if the game runs slowly.", k_next);
+         "How sharp the game is drawn. Higher is sharper but slower; the original "
+         "480 is the fastest. Native matches your screen. Lower it if the game "
+         "runs slowly.", k_next);
 
     row("Fullscreen");
     toggle("##fs", &s_cfg.fullscreen);

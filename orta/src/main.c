@@ -348,10 +348,10 @@ static const char *k_settings_default =
 "; Panzer Dragoon Orta - settings. Edit with Notepad; changes apply next start.\r\n"
 "\r\n"
 "[Display]\r\n"
-"; Height the game is drawn at, in steps of the original 480 lines:\r\n"
-";   480, 960, 1440, 1920, 2400 or 2880 (1x-6x). Other values round up\r\n"
-";   (1080 -> 1440, 2160 -> 2400). The picture is then scaled to fit the\r\n"
-";   screen: 1440 for a 1080p/1440p monitor, 2160 for 4K.\r\n"
+"; Render resolution:\r\n"
+";   480 (the original, fastest), 720, 1080, 1440, 2160 or Native (your\r\n"
+";   screen's). The game is drawn at the next whole multiple of 480 lines\r\n"
+";   (720 -> 960, 1080 and 1440 -> 1440, 2160 -> 2400), then fitted to the screen.\r\n"
 "Resolution = 480\r\n"
 "; 1 = 16:9 widescreen, 0 = original 4:3.\r\n"
 "Widescreen = 1\r\n"
@@ -405,11 +405,11 @@ static void apply_setting(const char *section, const char *key, const char *val)
         return;
     }
     if (!_stricmp(key, "Resolution")) {
-        int lines = atoi(val), k = (lines + 479) / 480;
-        if (k < 1) k = 1;
-        if (k > 6) k = 6;
-        snprintf(buf, sizeof buf, "%d", k);
+        /* 720/1080/1440/2160/Native: the smallest whole multiple of 480
+         * lines that covers it (see launcher.h). */
+        snprintf(buf, sizeof buf, "%d", orta_res_scale(val));
         set_default_env("RECOMP_GPU_SCALE", buf);
+        set_default_env("RECOMP_RES_CHOICE", val);
     } else if (!_stricmp(key, "RenderScale")) {
         set_default_env("RECOMP_GPU_SCALE", val);
     } else if (!_stricmp(key, "Widescreen")) {

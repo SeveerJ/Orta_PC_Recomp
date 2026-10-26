@@ -26,8 +26,82 @@ enum {
     ID_SHOW, ID_PLAY, ID_QUIT, ID_TIMER = 1
 };
 
-static const int k_res[]  = { 480, 960, 1440, 1920, 2400, 2880 };
+static const int k_res_h[] = { 480, 720, 1080, 1440, 2160, 0 };   /* 0: Native */
+static const char *k_res_v[] = { "480", "720", "1080", "1440", "2160", "Native" };
+static const char *k_res_n[] = { "original, fastest", "720p", "1080p", "1440p", "4K", "Native" };
 static const int k_winh[] = { 540, 720, 900, 1080, 1440 };
+
+/* The primary screen in real pixels. Asked once: the F1 menu labels ask
+ * every frame, and EnumDisplaySettings is slow. */
+void orta_screen_size(int *w, int *h)
+{
+    static int sw, sh;
+    if (!sh) {
+        DEVMODEW dm;
+        memset(&dm, 0, sizeof dm);
+        dm.dmSize = sizeof dm;
+        if (EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsHeight) {
+            sw = (int)dm.dmPelsWidth;
+            sh = (int)dm.dmPelsHeight;
+        } else {
+            sw = GetSystemMetrics(SM_CXSCREEN);
+            sh = GetSystemMetrics(SM_CYSCREEN);
+        }
+    }
+    *w = sw;
+    *h = sh;
+}
+
+int orta_res_index(const char *v)
+{
+    int i, h, best = 0;
+    while (v && (*v == ' ' || *v == '\t')) v++;
+    if (!v || !*v) return 0;
+    if (!_strnicmp(v, "native", 6)) return 5;
+    h = atoi(v);
+    for (i = 0; i < 5; i++)
+        if (abs(k_res_h[i] - h) < abs(k_res_h[best] - h)) best = i;
+    return best;
+}
+
+const char *orta_res_value(int i)
+{
+    return k_res_v[i < 0 || i >= ORTA_RES_COUNT ? 0 : i];
+}
+
+int orta_res_height(int i)
+{
+    int w, h;
+    if (i < 0 || i >= ORTA_RES_COUNT) i = 0;
+    if (k_res_h[i]) return k_res_h[i];
+    orta_screen_size(&w, &h);
+    return h > 0 ? h : 1080;
+}
+
+int orta_res_scale(const char *v)
+{
+    int h, k;
+    while (v && (*v == ' ' || *v == '\t')) v++;
+    if (v && !_strnicmp(v, "native", 6)) h = orta_res_height(5);
+    else h = v ? atoi(v) : 480;          /* old values (960, 2400...) keep working */
+    if (h <= 0) h = 480;
+    k = (h + 479) / 480;
+    return k < 1 ? 1 : k > 6 ? 6 : k;
+}
+
+void orta_res_label(int i, int wide, char *out, int cap)
+{
+    int w, h;
+    if (i < 0 || i >= ORTA_RES_COUNT) i = 0;
+    if (!k_res_h[i]) {
+        orta_screen_size(&w, &h);
+        snprintf(out, cap, "Native (%d x %d)", w, h);
+        return;
+    }
+    h = k_res_h[i];
+    w = wide ? (h * 16 + 8) / 9 : h * 4 / 3;
+    snprintf(out, cap, "%d x %d (%s)", w, h, k_res_n[i]);
+}
 
 static const char *s_ini;
 static HWND s_wnd, s_res, s_mode, s_winh, s_wide, s_vsync, s_vol, s_voltxt, s_show;
@@ -95,14 +169,14 @@ static int width_for(int h)
 static void fill_sizes(void)
 {
     wchar_t b[96];
+    char a[96];
     int i, sel = (int)SendMessageW(s_res, CB_GETCURSEL, 0, 0);
     int wsel = (int)SendMessageW(s_winh, CB_GETCURSEL, 0, 0);
+    int wide = SendMessageW(s_wide, BM_GETCHECK, 0, 0) == BST_CHECKED;
     SendMessageW(s_res, CB_RESETCONTENT, 0, 0);
-    for (i = 0; i < 6; i++) {
-        if (i == 0)
-            swprintf(b, 96, L"%d x %d (original, fastest)", width_for(k_res[i]), k_res[i]);
-        else
-            swprintf(b, 96, L"%d x %d (%dx)", width_for(k_res[i]), k_res[i], i + 1);
+    for (i = 0; i < ORTA_RES_COUNT; i++) {
+        orta_res_label(i, wide, a, sizeof a);
+        MultiByteToWideChar(CP_UTF8, 0, a, -1, b, 96);
         SendMessageW(s_res, CB_ADDSTRING, 0, (LPARAM)b);
     }
     SendMessageW(s_res, CB_SETCURSEL, sel, 0);
@@ -125,8 +199,12 @@ static void build(void)
 
     label(L"Render resolution", y);
     s_res = mk(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, 210, y + 2, 270, 300, ID_RES);
-    for (i = 0; i < 6; i++) SendMessageW(s_res, CB_ADDSTRING, 0, (LPARAM)L"");
-    SendMessageW(s_res, CB_SETCURSEL, nearest(k_res, 6, ini_int("Display", "Resolution", 480)), 0);
+    {
+        char v[32];
+        GetPrivateProfileStringA("Display", "Resolution", "480", v, sizeof v, s_ini);
+        for (i = 0; i < ORTA_RES_COUNT; i++) SendMessageW(s_res, CB_ADDSTRING, 0, (LPARAM)L"");
+        SendMessageW(s_res, CB_SETCURSEL, orta_res_index(v), 0);
+    }
     y += 40;
 
     label(L"Display", y);
@@ -176,7 +254,8 @@ static void build(void)
 
 static void save(void)
 {
-    ini_put("Display", "Resolution", k_res[SendMessageW(s_res, CB_GETCURSEL, 0, 0)]);
+    WritePrivateProfileStringA("Display", "Resolution",
+                               orta_res_value((int)SendMessageW(s_res, CB_GETCURSEL, 0, 0)), s_ini);
     ini_put("Display", "Fullscreen", SendMessageW(s_mode, CB_GETCURSEL, 0, 0) == 0);
     ini_put("Display", "WindowHeight", k_winh[SendMessageW(s_winh, CB_GETCURSEL, 0, 0)]);
     ini_put("Display", "Widescreen", SendMessageW(s_wide, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -325,7 +404,6 @@ int launcher_maybe_run(const char *ini_path)
     INITCOMMONCONTROLSEX icc;
     int show, shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     const char *force = getenv("RECOMP_LAUNCHER");
-    DEVMODEW dm;
 
     s_ini = ini_path;
     show = ini_int("Launcher", "ShowOnStart", -1);       /* -1: never chosen = first start */
@@ -343,15 +421,7 @@ int launcher_maybe_run(const char *ini_path)
     icc.dwICC = ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
     InitCommonControlsEx(&icc);
 
-    memset(&dm, 0, sizeof dm);
-    dm.dmSize = sizeof dm;
-    if (EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm)) {
-        s_screen_w = (int)dm.dmPelsWidth;
-        s_screen_h = (int)dm.dmPelsHeight;
-    } else {
-        s_screen_w = GetSystemMetrics(SM_CXSCREEN);
-        s_screen_h = GetSystemMetrics(SM_CYSCREEN);
-    }
+    orta_screen_size(&s_screen_w, &s_screen_h);
     xi = LoadLibraryW(L"xinput1_4.dll");
     if (!xi) xi = LoadLibraryW(L"xinput1_3.dll");
     s_get_state = xi ? (PfnGetState)(void *)GetProcAddress(xi, "XInputGetState") : NULL;
