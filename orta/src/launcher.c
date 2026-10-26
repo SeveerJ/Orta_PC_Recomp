@@ -33,7 +33,7 @@ static const char *s_ini;
 static HWND s_wnd, s_res, s_mode, s_winh, s_wide, s_vsync, s_vol, s_voltxt, s_show;
 static HFONT s_font, s_title_font;
 static int s_dpi = 96, s_result;
-static int s_screen_h;
+static int s_screen_w, s_screen_h;
 
 static int S(int v) { return MulDiv(v, s_dpi, 96); }
 
@@ -84,21 +84,48 @@ static void update_enabled(void)
     EnableWindow(s_winh, SendMessageW(s_mode, CB_GETCURSEL, 0, 0) == 1);
 }
 
+/* Width for a height at the chosen shape: 16:9, or the original 4:3. */
+static int width_for(int h)
+{
+    int wide = !s_wide || SendMessageW(s_wide, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    return wide ? (h * 16 + 8) / 9 : h * 4 / 3;
+}
+
+/* (Re)write both size lists as full sizes, keeping what is selected. */
+static void fill_sizes(void)
+{
+    wchar_t b[96];
+    int i, sel = (int)SendMessageW(s_res, CB_GETCURSEL, 0, 0);
+    int wsel = (int)SendMessageW(s_winh, CB_GETCURSEL, 0, 0);
+    SendMessageW(s_res, CB_RESETCONTENT, 0, 0);
+    for (i = 0; i < 6; i++) {
+        if (i == 0)
+            swprintf(b, 96, L"%d x %d (original, fastest)", width_for(k_res[i]), k_res[i]);
+        else
+            swprintf(b, 96, L"%d x %d (%dx)", width_for(k_res[i]), k_res[i], i + 1);
+        SendMessageW(s_res, CB_ADDSTRING, 0, (LPARAM)b);
+    }
+    SendMessageW(s_res, CB_SETCURSEL, sel, 0);
+    SendMessageW(s_winh, CB_RESETCONTENT, 0, 0);
+    for (i = 0; i < 5; i++) {
+        swprintf(b, 96, L"%d x %d", width_for(k_winh[i]), k_winh[i]);
+        SendMessageW(s_winh, CB_ADDSTRING, 0, (LPARAM)b);
+    }
+    SendMessageW(s_winh, CB_SETCURSEL, wsel, 0);
+}
+
 static void build(void)
 {
     wchar_t b[96];
     int i, y = 76;
     HWND t = mk(L"STATIC", L"Panzer Dragoon Orta", 0, 24, 16, 460, 36, 0);
     SendMessageW(t, WM_SETFONT, (WPARAM)s_title_font, TRUE);
-    swprintf(b, 96, L"Settings before you play. Your screen is %d pixels tall.", s_screen_h);
+    swprintf(b, 96, L"Settings before you play. Your screen is %d x %d.", s_screen_w, s_screen_h);
     mk(L"STATIC", b, 0, 24, 50, 460, 22, 0);
 
     label(L"Render resolution", y);
     s_res = mk(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, 210, y + 2, 270, 300, ID_RES);
-    for (i = 0; i < 6; i++) {
-        swprintf(b, 96, i == 0 ? L"%d (original, fastest)" : L"%d (%dx)", k_res[i], i + 1);
-        SendMessageW(s_res, CB_ADDSTRING, 0, (LPARAM)b);
-    }
+    for (i = 0; i < 6; i++) SendMessageW(s_res, CB_ADDSTRING, 0, (LPARAM)L"");
     SendMessageW(s_res, CB_SETCURSEL, nearest(k_res, 6, ini_int("Display", "Resolution", 480)), 0);
     y += 40;
 
@@ -111,10 +138,7 @@ static void build(void)
 
     label(L"Window height", y);
     s_winh = mk(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, 210, y + 2, 270, 200, ID_WINH);
-    for (i = 0; i < 5; i++) {
-        swprintf(b, 96, L"%d", k_winh[i]);
-        SendMessageW(s_winh, CB_ADDSTRING, 0, (LPARAM)b);
-    }
+    for (i = 0; i < 5; i++) SendMessageW(s_winh, CB_ADDSTRING, 0, (LPARAM)L"");
     SendMessageW(s_winh, CB_SETCURSEL, nearest(k_winh, 5, ini_int("Display", "WindowHeight", 720)), 0);
     y += 44;
 
@@ -146,6 +170,7 @@ static void build(void)
 
     mk(WC_BUTTONW, L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP, 264, y, 104, 36, ID_PLAY);
     mk(WC_BUTTONW, L"Quit", WS_TABSTOP, 380, y, 104, 36, ID_QUIT);
+    fill_sizes();
     update_enabled();
 }
 
@@ -243,6 +268,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
         case ID_PLAY: case IDOK: save(); s_result = 1; DestroyWindow(h); return 0;
         case ID_QUIT: case IDCANCEL: s_result = 0; DestroyWindow(h); return 0;
         case ID_MODE: if (HIWORD(w) == CBN_SELCHANGE) update_enabled(); return 0;
+        case ID_WIDE: if (HIWORD(w) == BN_CLICKED) fill_sizes(); return 0;
         }
         break;
     case WM_HSCROLL:
@@ -319,8 +345,13 @@ int launcher_maybe_run(const char *ini_path)
 
     memset(&dm, 0, sizeof dm);
     dm.dmSize = sizeof dm;
-    s_screen_h = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm) ? (int)dm.dmPelsHeight
-                                                                       : GetSystemMetrics(SM_CYSCREEN);
+    if (EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm)) {
+        s_screen_w = (int)dm.dmPelsWidth;
+        s_screen_h = (int)dm.dmPelsHeight;
+    } else {
+        s_screen_w = GetSystemMetrics(SM_CXSCREEN);
+        s_screen_h = GetSystemMetrics(SM_CYSCREEN);
+    }
     xi = LoadLibraryW(L"xinput1_4.dll");
     if (!xi) xi = LoadLibraryW(L"xinput1_3.dll");
     s_get_state = xi ? (PfnGetState)(void *)GetProcAddress(xi, "XInputGetState") : NULL;
