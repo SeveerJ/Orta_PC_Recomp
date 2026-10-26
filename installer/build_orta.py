@@ -204,6 +204,9 @@ def compile_all(cc_dir, gen, objdir, jobs):
         comp, flags, source = job
         rel = os.path.relpath(source, ROOT).replace(os.sep, "_").replace(".", "_")
         obj = os.path.join(objdir, rel + ".o")
+        # A retry after a failed run reuses what already compiled.
+        if os.path.isfile(obj) and os.path.getmtime(obj) > os.path.getmtime(source):
+            return source, obj, 0, ""
         p = subprocess.run([comp] + flags + ["-c", source, "-o", obj],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                            errors="replace")
@@ -215,7 +218,7 @@ def compile_all(cc_dir, gen, objdir, jobs):
             done += 1
             if rc != 0:
                 errors.append((source, out))
-            objs.append(obj)
+            objs.append((source, obj))
             progress(45 + int(45 * done / total),
                      "Compiling (%d of %d files)" % (done, total))
     if errors:
@@ -229,11 +232,43 @@ def compile_all(cc_dir, gen, objdir, jobs):
 
 def link(clangxx, objs, exe):
     progress(91, "Linking")
+    # The runtime goes in a static library, as the CMake build has it: only
+    # the parts the game uses are linked, so a runtime file with references
+    # meant for another game or backend (nv2a_pb_replay.c) does no harm.
+    src = os.path.join(TOOLKIT, "src")
+    runtime = [o for s, o in objs if os.path.commonpath([s, src]) == src]
+    game = [o for s, o in objs if os.path.commonpath([s, src]) != src]
+    lib = os.path.join(os.path.dirname(exe), "libxboxrecomp.a")
+    if os.path.exists(lib):
+        os.remove(lib)
+    ar = os.path.join(os.path.dirname(clangxx), "llvm-ar.exe")
+    arsp = lib + ".rsp"
+    with open(arsp, "w") as f:
+        for o in runtime:
+            f.write('"%s"\n' % o.replace("\\", "/"))
+    p = subprocess.run([ar, "rcs", lib, "@" + arsp], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, errors="replace")
+    if p.returncode != 0:
+        for line in p.stdout.strip().splitlines()[:20]:
+            say("  " + line)
+        fail("Making the runtime library failed. The log above has the details.")
     rsp = exe + ".rsp"
     with open(rsp, "w") as f:
-        for o in objs:
+        for o in game:
             f.write('"%s"\n' % o.replace("\\", "/"))
-    args = [clangxx, "-mwindows", "-static", "-o", exe, "@" + rsp]
+        f.write('"%s"\n' % lib.replace("\\", "/"))
+    # The runtime's "#pragma comment(lib, ...)" lines name MSVC's libraries
+    # (xaudio2, xinput, d3dcompiler). mingw has those names for other DLL
+    # versions, or not at all, so point each name at the DLL the MSVC build
+    # uses, ahead of the compiler's own folder.
+    alias = os.path.join(os.path.dirname(exe), "libalias")
+    os.makedirs(alias, exist_ok=True)
+    libdir = os.path.join(os.path.dirname(os.path.dirname(clangxx)), "x86_64-w64-mingw32", "lib")
+    for name, real in (("xaudio2", "xaudio2_8"), ("xinput", "xinput1_4"),
+                       ("d3dcompiler", "d3dcompiler_47")):
+        shutil.copyfile(os.path.join(libdir, "lib%s.a" % real),
+                        os.path.join(alias, "lib%s.a" % name))
+    args = [clangxx, "-mwindows", "-static", "-L" + alias, "-o", exe, "@" + rsp]
     args += ["-l" + l for l in LIBS]
     p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                        errors="replace")
@@ -288,7 +323,26 @@ def main():
     for f in ("seeds_manual.json", "alias_seeds.json", "trace_functions.json"):
         shutil.copyfile(os.path.join(ORTA, "seeds", f), os.path.join(game_files, f))
 
-    gen = translate()
+    # A retry after a failed run skips translating when nothing it reads changed.
+    h = hashlib.sha1(digest.encode())
+    for f in ("seeds_manual.json", "alias_seeds.json", "trace_functions.json"):
+        with open(os.path.join(ORTA, "seeds", f), "rb") as fh:
+            h.update(fh.read())
+    with open(os.path.join(ORTA, "src", "recomp_manual.c"), "rb") as fh:
+        h.update(fh.read())
+    stamp = os.path.join(ROOT, "_obj", "translation.stamp")
+    gen_dir = os.path.join(ORTA, "src", "recomp", "gen")
+    if (os.path.isfile(stamp) and open(stamp).read() == h.hexdigest() and
+            os.path.isfile(os.path.join(gen_dir, "recomp_dispatch.c"))):
+        say("Translation is up to date from the last run")
+        gen = gen_dir
+    else:
+        if os.path.isfile(stamp):
+            os.remove(stamp)
+        gen = translate()
+        os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        with open(stamp, "w") as fh:
+            fh.write(h.hexdigest())
     clangxx, objs = compile_all(a.cc, gen, os.path.join(ROOT, "_obj"), a.jobs)
     built = os.path.join(ROOT, "_obj", "orta.exe")
     link(clangxx, objs, built)
