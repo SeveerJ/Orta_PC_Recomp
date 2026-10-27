@@ -1951,7 +1951,9 @@ static void bridge_NtWaitForSingleObjectEx(void)
      * the game and render threads get it; the poll's result is unchanged. */
     if (g_eax == 0x102u && timeout_ptr && BRIDGE_MEM32(timeout_ptr) == 0 &&
         BRIDGE_MEM32(timeout_ptr + 4) == 0)
-        SwitchToThread();
+        recomp_idle_backoff();     /* yields, then 1 ms sleeps while it keeps polling */
+    else
+        recomp_idle_reset();
 }
 
 /* ── MmQueryAddressProtect (ordinal 179) ─────────────────── */
@@ -2030,6 +2032,11 @@ static void bridge_NtWaitForMultipleObjectsEx(void)
             XBOX_TO_NATIVE(timeout_ptr));
         if (ws) wait_end(ws);
     }
+    if (g_eax == 0x102u && timeout_ptr && BRIDGE_MEM32(timeout_ptr) == 0 &&
+        BRIDGE_MEM32(timeout_ptr + 4) == 0)
+        recomp_idle_backoff();     /* a zero-timeout poll that found nothing */
+    else
+        recomp_idle_reset();
 }
 
 /*

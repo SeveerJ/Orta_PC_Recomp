@@ -1081,6 +1081,15 @@ void xbox_log(int level, const char* subsystem, const char* fmt, ...);
  * their work then. RECOMP_QUIET=0 or 1 overrides. */
 int recomp_diag_quiet(void);
 
+/* A guest thread that polls or yields in a tight loop (zero-timeout waits,
+ * zero-length delays, NtYieldExecution) used to keep a whole host core busy:
+ * SwitchToThread returns at once when nothing else is ready. Call this
+ * instead: it yields for the first ~200 back-to-back calls, then sleeps 1 ms
+ * per call while the thread keeps doing nothing but polling.
+ * recomp_idle_reset() starts over (the poll found something). */
+void recomp_idle_backoff(void);
+void recomp_idle_reset(void);
+
 #ifdef _DEBUG
 #define XBOX_TRACE(subsystem, fmt, ...) xbox_log(XBOX_LOG_TRACE, subsystem, fmt, ##__VA_ARGS__)
 #else

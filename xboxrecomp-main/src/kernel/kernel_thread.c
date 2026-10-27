@@ -169,7 +169,7 @@ NTSTATUS __stdcall xbox_KeDelayExecutionThread(
 
     if (Interval->QuadPart == 0) {
         /* Zero interval = yield the thread's time slice */
-        SwitchToThread();
+        recomp_idle_backoff();
         return STATUS_SUCCESS;
     }
 
@@ -301,8 +301,46 @@ NTSTATUS __stdcall xbox_KeAlertThread(PVOID Thread, KPROCESSOR_MODE AlertMode)
 
 NTSTATUS __stdcall xbox_NtYieldExecution(void)
 {
-    SwitchToThread();
+    recomp_idle_backoff();
     return STATUS_SUCCESS;
+}
+
+/* See kernel.h. "Back-to-back" means within 200 us of the last call (or of
+ * waking from the last sleep), so a thread that does real work between polls
+ * never sleeps. The 1 ms sleep is one scheduler tick at the 1 ms timer
+ * resolution the runtime asks for. RECOMP_IDLE_SLEEP=0 turns it off. */
+static RECOMP_TLS LONGLONG t_idle_last;
+static RECOMP_TLS unsigned t_idle_run;
+
+void recomp_idle_reset(void)
+{
+    t_idle_run = 0;
+}
+
+void recomp_idle_backoff(void)
+{
+    static LONGLONG freq, gap;
+    static int on = -1;
+    LARGE_INTEGER now;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_IDLE_SLEEP");
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        freq = f.QuadPart ? f.QuadPart : 1;
+        gap = freq / 5000;
+        on = !(e && *e == '0');
+    }
+    QueryPerformanceCounter(&now);
+    if (now.QuadPart - t_idle_last > gap)
+        t_idle_run = 0;
+    if (!on || ++t_idle_run < 200) {
+        SwitchToThread();
+        QueryPerformanceCounter(&now);
+    } else {
+        Sleep(1);
+        QueryPerformanceCounter(&now);
+    }
+    t_idle_last = now.QuadPart;
 }
 
 /* ============================================================================
