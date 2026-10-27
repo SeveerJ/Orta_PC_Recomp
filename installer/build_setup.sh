@@ -9,9 +9,11 @@ WLIB=${WLIB:-/home/claude/deps/wlib}
 LLVM=${LLVM:-/usr/lib/llvm-18/bin}
 clang --target=x86_64-w64-mingw32 -isystem "$MWINC" -O2 -ffreestanding -fno-builtin \
       -mno-stack-arg-probe -fno-stack-protector -Wall -Wno-unused-function -c setup.c -o setup.o
+clang --target=x86_64-w64-mingw32 -isystem "$MWINC" -O2 -ffreestanding -fno-builtin \
+      -mno-stack-arg-probe -fno-stack-protector -Wall -c unzip.c -o unzip.o
 $LLVM/llvm-rc /fo setup.res setup.rc
-lld-link /nodefaultlib /entry:start /subsystem:windows,6.0 /out:Setup.exe setup.o setup.res \
+lld-link /nodefaultlib /entry:start /subsystem:windows,6.0 /out:Setup.exe setup.o unzip.o setup.res \
     "$WLIB/kernel32.lib" "$WLIB/user32.lib" "$WLIB/gdi32.lib" "$WLIB/comctl32.lib" \
     "$WLIB/comdlg32.lib" "$WLIB/shell32.lib" "$WLIB/ole32.lib" "$WLIB/urlmon.lib"
-rm -f setup.o setup.res
+rm -f setup.o unzip.o setup.res
 ls -la Setup.exe
