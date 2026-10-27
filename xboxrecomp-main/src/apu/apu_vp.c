@@ -98,6 +98,23 @@ static void apu_stats_tick(MCPXAPUState *d)
     memset(s_st_note, 0, sizeof s_st_note);
 }
 
+/* RECOMP_APU_STREAMLOG=1: every stream-voice event (on, off, release,
+ * stream lists, running dry, lists finished), timestamped, to chase music
+ * that sometimes never starts. Off by default. */
+static int streamlog_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_APU_STREAMLOG");
+        on = e && *e == '1';
+    }
+    return on;
+}
+static unsigned char s_stream_dry[MCPX_HW_MAX_VOICES];
+#define STREAMLOG(...) do { if (streamlog_on()) { \
+    fprintf(stderr, "[STREAM %lu] ", (unsigned long)GetTickCount()); \
+    fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } } while (0)
+
 static void set_notify_status(MCPXAPUState *d, uint32_t v, int notifier,
                               int status)
 {
@@ -206,6 +223,10 @@ static void voice_off(MCPXAPUState *d, uint16_t v)
     }
     voice_set_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
                    NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+    if (streamlog_on() && voice_get_mask(d, v, NV_PAVS_VOICE_CFG_FMT,
+                                         NV_PAVS_VOICE_CFG_FMT_DATA_TYPE))
+        STREAMLOG("voice %u OFF (was %s)%s", (unsigned)v, was_active ? "playing" : "already off",
+                  (!was_active && !renotify) ? " -- no done notification" : "");
     if (!was_active && !renotify)
         return;
 
@@ -301,6 +322,18 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
 
     case NV1BA0_PIO_VOICE_ON: {
         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
+        if (streamlog_on() && voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
+                                              NV_PAVS_VOICE_CFG_FMT_DATA_TYPE)) {
+            s_stream_dry[selected_handle] = 0;
+            STREAMLOG("voice %u ON  persist=%d ssl A=%u B=%u index=%d paused=%d",
+                (unsigned)selected_handle,
+                (int)(voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
+                                     NV_PAVS_VOICE_CFG_FMT_PERSIST) != 0),
+                d->vp.ssl[selected_handle].count[0], d->vp.ssl[selected_handle].count[1],
+                d->vp.ssl[selected_handle].ssl_index,
+                (int)(voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_PAR_STATE,
+                                     NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0));
+        }
 
         bool locked = is_voice_locked(d, (uint16_t)selected_handle);
         if (!locked) voice_lock(d, (uint16_t)selected_handle, true);
@@ -386,6 +419,9 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
 
     case NV1BA0_PIO_VOICE_RELEASE: {
         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
+        if (streamlog_on() && voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
+                                              NV_PAVS_VOICE_CFG_FMT_DATA_TYPE))
+            STREAMLOG("voice %u RELEASE", (unsigned)selected_handle);
 
         bool locked = is_voice_locked(d, (uint16_t)selected_handle);
         if (!locked) voice_lock(d, (uint16_t)selected_handle, true);
@@ -567,6 +603,10 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
             GET_MASK(argument, NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
         d->vp.ssl[current_voice].count[ssl] =
             (uint8_t)GET_MASK(argument, NV1BA0_PIO_SET_VOICE_SSL_A_COUNT);
+        STREAMLOG("voice %d list A = %u segments (playing list %d, active %d)", current_voice,
+                  d->vp.ssl[current_voice].count[ssl], d->vp.ssl[current_voice].ssl_index,
+                  (int)voice_get_mask(d, (uint16_t)current_voice, NV_PAVS_VOICE_PAR_STATE,
+                                      NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE));
         break;
     }
     case NV1BA0_PIO_SET_VOICE_SSL_B: {
@@ -577,6 +617,10 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
             GET_MASK(argument, NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
         d->vp.ssl[current_voice].count[ssl] =
             (uint8_t)GET_MASK(argument, NV1BA0_PIO_SET_VOICE_SSL_A_COUNT);
+        STREAMLOG("voice %d list B = %u segments (playing list %d, active %d)", current_voice,
+                  d->vp.ssl[current_voice].count[ssl], d->vp.ssl[current_voice].ssl_index,
+                  (int)voice_get_mask(d, (uint16_t)current_voice, NV_PAVS_VOICE_PAR_STATE,
+                                      NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE));
         break;
     }
 
@@ -963,6 +1007,8 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
             int eacur = voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_STATE,
                                        NV_PAVS_VOICE_PAR_STATE_EACUR);
             if (eacur < NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE) {
+                STREAMLOG("voice %u not persistent and envelope %d before release: turned off",
+                          (unsigned)v, eacur);
                 voice_off(d, (uint16_t)v);
                 return -1;
             }
@@ -975,6 +1021,10 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
         count = d->vp.ssl[v].count[ssl_index];
 
         if (count == 0) {
+            if (!s_stream_dry[v])          /* once per dry spell */
+                STREAMLOG("voice %u ran dry: list %d empty (persist %d)", (unsigned)v,
+                          ssl_index, (int)persist);
+            s_stream_dry[v] = 1;
             voice_set_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_OFFSET,
                            NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
             d->vp.ssl[v].ssl_seg = 0;
@@ -1102,6 +1152,10 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                 /* Move to next segment */
             } else {
                 int next_index = (ssl_index + 1) % 2;
+                s_stream_dry[v] = 0;
+                STREAMLOG("voice %u finished list %d (%u segments), on to list %d (%u)",
+                          (unsigned)v, ssl_index, d->vp.ssl[v].count[ssl_index], next_index,
+                          d->vp.ssl[v].count[next_index]);
                 d->vp.ssl[v].ssl_index = next_index;
                 d->vp.ssl[v].ssl_seg = 0;
                 set_notify_status(d, v, MCPX_HW_NOTIFIER_SSLA_DONE + ssl_index,
