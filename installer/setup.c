@@ -388,15 +388,34 @@ static int unz_put(void *vctx, const char *name, int is_dir, const unsigned char
 /* Unpacks `size` bytes of `path` starting at `offset` (a zip) into dest. */
 static BOOL unzip_file(const WCHAR *path, ULONGLONG offset, ULONGLONG size, const WCHAR *dest)
 {
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE h = INVALID_HANDLE_VALUE;
     unsigned char *buf = NULL;
     UnzCtx c;
-    int rc = -1;
+    int rc = -1, tries;
     LARGE_INTEGER sz;
-    if (h == INVALID_HANDLE_VALUE) return FALSE;
+    WCHAR msg[MAX_PATH + 128];
+    /* A file just downloaded is often still open in the virus scanner for a
+     * moment: share everything, and try for a few seconds. */
+    for (tries = 0; tries < 20; tries++) {
+        h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        NULL, OPEN_EXISTING, 0, NULL);
+        if (h != INVALID_HANDLE_VALUE) break;
+        Sleep(500);
+    }
+    if (h == INVALID_HANDLE_VALUE) {
+        wsprintfW(msg, L"Could not open %s (Windows error %lu).", path, GetLastError());
+        log_line(msg);
+        return FALSE;
+    }
     if (!size && GetFileSizeEx(h, &sz)) size = (ULONGLONG)sz.QuadPart - offset;
     if (size && size < 0x7FFFFFFF) buf = alloc((SIZE_T)size);
-    if (buf && read_at(h, offset, buf, (DWORD)size)) {
+    if (!buf) {
+        wsprintfW(msg, L"Could not read %s: size %lu bytes.", path, (DWORD)size);
+        log_line(msg);
+    } else if (!read_at(h, offset, buf, (DWORD)size)) {
+        wsprintfW(msg, L"Could not read %s (Windows error %lu).", path, GetLastError());
+        log_line(msg);
+    } else {
         c.dest = dest; c.files = 0; c.err = 0;
         SHCreateDirectoryExW(NULL, dest, NULL);
         rc = unz_extract(buf, (unsigned long)size, unz_put, &c, unz_alloc, unz_release);
@@ -474,6 +493,7 @@ static BOOL ensure_python(WCHAR *pyexe)
         }
     }
     if (!unzip_file(zip, 0, 0, pydir) || !file_exists(pyexe)) {
+        if (!file_exists(pyexe)) log_line(L"python.exe was not among the unpacked files.");
         DeleteFileW(zip);
         log_line(L"Could not unpack Python. Run Setup again.");
         return FALSE;
@@ -563,8 +583,8 @@ static DWORD WINAPI worker(LPVOID unused)
         WCHAR pw[MAX_PATH + 32], dir[MAX_PATH];
         DWORD t0 = GetTickCount();
         int i;
-        post_text(WM_PROGRESS, 99, L"Windows is checking the new game (first time only; can take a few minutes)");
-        log_line(L"Letting Windows check the game before its first start...");
+        post_text(WM_PROGRESS, 99, L"Preparing the graphics shaders (a few minutes; this makes the first start quick)");
+        log_line(L"Preparing the graphics shaders, so the first start is quick...");
         lstrcpyW(dir, g_exe);
         for (i = lstrlenW(dir); i > 0 && dir[i] != L'\\'; i--) ;
         dir[i] = 0;
@@ -572,7 +592,7 @@ static DWORD WINAPI worker(LPVOID unused)
         run_wait(pw, dir);
         {
             WCHAR msg[96];
-            wsprintfW(msg, L"Checked in %lu seconds.", (GetTickCount() - t0 + 500) / 1000);
+            wsprintfW(msg, L"Shaders ready in %lu seconds.", (GetTickCount() - t0 + 500) / 1000);
             log_line(msg);
         }
     }

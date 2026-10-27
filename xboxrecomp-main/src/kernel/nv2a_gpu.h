@@ -136,4 +136,8 @@ uint32_t nv2a_exec_tex_face_stride(const Nv2aGpuTexDesc *d);
 int      nv2a_exec_tex_level(const Nv2aGpuTexDesc *d, uint32_t level,
                              Nv2aGpuTexDesc *out);
 
+/* Compile the start-up shaders into the disk cache and return (Setup runs
+ * the game with --prewarm). 1 on success. */
+int nv2a_gpu_prewarm_shaders(void);
+
 #endif

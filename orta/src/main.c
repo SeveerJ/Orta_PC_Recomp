@@ -548,9 +548,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Setup starts the freshly built exe once with --prewarm, so the virus
      * scan Windows runs on a program it has never seen happens during
-     * Setup rather than on the player's first start. Nothing else runs. */
-    if (lpCmdLine && strstr(lpCmdLine, "--prewarm"))
+     * Setup rather than on the player's first start... */
+    if (lpCmdLine && strstr(lpCmdLine, "--prewarm")) {
+        /* ...and the graphics shaders are compiled into the disk cache:
+         * on a first start that takes minutes before the first frame. */
+        extern int nv2a_gpu_prewarm_shaders(void);
+        nv2a_gpu_prewarm_shaders();
         return 0;
+    }
 
     load_settings();
     ovl_install();                 /* F1 settings menu */

@@ -1082,6 +1082,56 @@ static ID3DBlob *compile(PfnCompile fn, const char *entry, const char *target)
     return compile_src(fn, s_hlsl, sizeof s_hlsl - 1, entry, target);
 }
 
+/* ── Prewarm: fill the shader cache without starting the game ──────────
+ * Compiling the start-up shaders takes minutes on the first run (the game
+ * waits on it before its first frame), so Setup runs the exe once with
+ * --prewarm and this compiles them all into the disk cache, in parallel. */
+typedef struct { const char *src; size_t len; const char *entry, *target; } PrewarmJob;
+static PfnCompile s_prewarm_comp;
+
+static DWORD WINAPI prewarm_one(LPVOID arg)
+{
+    const PrewarmJob *j = (const PrewarmJob *)arg;
+    ID3DBlob *b = compile_src(s_prewarm_comp, j->src, j->len, j->entry, j->target);
+    REL(b);
+    return 0;
+}
+
+int nv2a_gpu_prewarm_shaders(void)
+{
+    static const PrewarmJob jobs[] = {
+        { s_hlsl,      sizeof s_hlsl - 1,      "vs_main",    "vs_5_0" },
+        { s_hlsl,      sizeof s_hlsl - 1,      "ps_main",    "ps_5_0" },
+        { s_hlsl,      sizeof s_hlsl - 1,      "ps_zoff",    "ps_5_0" },
+        { s_hlsl_vsh,  sizeof s_hlsl_vsh - 1,  "vs_prog",    "vs_5_0" },
+        { s_hlsl_vsh,  sizeof s_hlsl_vsh - 1,  "gs_pt",      "gs_5_0" },
+        { s_hlsl_vsh,  sizeof s_hlsl_vsh - 1,  "gs_ln",      "gs_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "vs_blit",    "vs_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_down",    "ps_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_up",      "ps_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present", "ps_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_overlay", "ps_5_0" },
+    };
+    enum { N = sizeof jobs / sizeof jobs[0] };
+    HANDLE th[N];
+    HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
+    int i, n = 0;
+    if (!dc) return 0;
+    s_prewarm_comp = (PfnCompile)(void *)GetProcAddress(dc, "D3DCompile");
+    s_create_blob = (PfnCreateBlob)(void *)GetProcAddress(dc, "D3DCreateBlob");
+    if (!s_prewarm_comp || !cache_ready()) return 0;
+    for (i = 0; i < N; i++) {
+        th[n] = CreateThread(NULL, 0, prewarm_one, (LPVOID)&jobs[i], 0, NULL);
+        if (th[n]) n++;
+        else prewarm_one((LPVOID)&jobs[i]);
+    }
+    for (i = 0; i < n; i++) {
+        WaitForSingleObject(th[i], INFINITE);
+        CloseHandle(th[i]);
+    }
+    return 1;
+}
+
 static int vsh_init(PfnCompile comp)
 {
     ID3DBlob *b = compile_src(comp, s_hlsl_vsh, sizeof s_hlsl_vsh - 1, "vs_prog", "vs_5_0");
