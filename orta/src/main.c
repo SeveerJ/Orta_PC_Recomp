@@ -544,8 +544,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     (void)hInstance;
     (void)hPrevInstance;
-    (void)lpCmdLine;
     (void)nCmdShow;
+
+    /* Setup starts the freshly built exe once with --prewarm, so the virus
+     * scan Windows runs on a program it has never seen happens during
+     * Setup rather than on the player's first start. Nothing else runs. */
+    if (lpCmdLine && strstr(lpCmdLine, "--prewarm"))
+        return 0;
 
     load_settings();
     ovl_install();                 /* F1 settings menu */

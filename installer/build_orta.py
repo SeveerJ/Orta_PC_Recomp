@@ -134,6 +134,7 @@ def run_tool(args, label, pct):
     env = dict(os.environ)
     env["XBOXRECOMP_ALIAS_SEEDS"] = os.path.join(TOOLKIT, "game_files", "alias_seeds.json")
     env["PYTHONPATH"] = TOOLKIT + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONHASHSEED"] = "0"          # same translation on every PC (see compile_all)
     p = subprocess.run([sys.executable] + args, cwd=TOOLKIT, env=env,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                        errors="replace")
@@ -180,19 +181,25 @@ def compile_all(cc_dir, gen, objdir, jobs):
                 "-I" + gen, "-I" + os.path.join(ORTA, "third_party", "imgui")]
     extra = os.path.join(ORTA, "src", "recomp", "recomp_extra.h")
 
+    # Every player's build should come out byte-identical: then Windows'
+    # cloud protection learns the one exe instead of meeting a never-seen file
+    # on each PC (which it holds for minutes on first start). So no per-PC
+    # paths in the output (they would also leak the player's user name).
+    repro = ["-ffile-prefix-map=%s=." % ROOT, "-ffile-prefix-map=%s=." % ROOT.replace("\\", "/")]
+
     jobs_list = []                       # (compiler, flags, source, object)
     for d, names in RUNTIME_SOURCES.items():
         for n in names.split():
-            jobs_list.append((clang, C_FLAGS + inc, os.path.join(src, d, n + ".c")))
+            jobs_list.append((clang, C_FLAGS + repro + inc, os.path.join(src, d, n + ".c")))
     game_c = [os.path.join(ORTA, "src", n) for n in ("main.c", "recomp_manual.c", "launcher.c")]
     game_c += sorted(os.path.join(gen, f) for f in os.listdir(gen) if f.endswith(".c"))
     for f in game_c:
-        jobs_list.append((clang, C_FLAGS + inc + game_inc + ["-include", extra], f))
+        jobs_list.append((clang, C_FLAGS + repro + inc + game_inc + ["-include", extra], f))
     imgui = os.path.join(ORTA, "third_party", "imgui")
     for f in ["imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp",
               "imgui_impl_dx11.cpp"]:
-        jobs_list.append((clangxx, CXX_FLAGS + game_inc, os.path.join(imgui, f)))
-    jobs_list.append((clangxx, CXX_FLAGS + game_inc, os.path.join(ORTA, "src", "overlay.cpp")))
+        jobs_list.append((clangxx, CXX_FLAGS + repro + game_inc, os.path.join(imgui, f)))
+    jobs_list.append((clangxx, CXX_FLAGS + repro + game_inc, os.path.join(ORTA, "src", "overlay.cpp")))
 
     os.makedirs(objdir, exist_ok=True)
     # Biggest first, so the long ones are not left for the end on one core.
@@ -268,7 +275,8 @@ def link(clangxx, objs, exe):
                        ("d3dcompiler", "d3dcompiler_47")):
         shutil.copyfile(os.path.join(libdir, "lib%s.a" % real),
                         os.path.join(alias, "lib%s.a" % name))
-    args = [clangxx, "-mwindows", "-static", "-L" + alias, "-o", exe, "@" + rsp]
+    args = [clangxx, "-mwindows", "-static", "-Wl,--no-insert-timestamp", "-L" + alias,
+            "-o", exe, "@" + rsp]
     args += ["-l" + l for l in LIBS]
     p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                        errors="replace")

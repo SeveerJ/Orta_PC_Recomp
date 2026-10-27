@@ -556,6 +556,26 @@ static DWORD WINAPI worker(LPVOID unused)
     WaitForSingleObject(pi.hProcess, INFINITE);
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    if (code == 0 && g_exe[0]) {
+        /* Windows scans a program it has never seen the first time it runs,
+         * and every player's build is new: start it once now (it quits at
+         * once with --prewarm) so that wait happens here, not at first play. */
+        WCHAR pw[MAX_PATH + 32], dir[MAX_PATH];
+        DWORD t0 = GetTickCount();
+        int i;
+        post_text(WM_PROGRESS, 99, L"Windows is checking the new game (first time only; can take a few minutes)");
+        log_line(L"Letting Windows check the game before its first start...");
+        lstrcpyW(dir, g_exe);
+        for (i = lstrlenW(dir); i > 0 && dir[i] != L'\\'; i--) ;
+        dir[i] = 0;
+        wsprintfW(pw, L"\"%s\" --prewarm", g_exe);
+        run_wait(pw, dir);
+        {
+            WCHAR msg[96];
+            wsprintfW(msg, L"Checked in %lu seconds.", (GetTickCount() - t0 + 500) / 1000);
+            log_line(msg);
+        }
+    }
     PostMessageW(g_wnd, WM_FINISHED, code == 0 && g_exe[0], 0);
     return 0;
 }
