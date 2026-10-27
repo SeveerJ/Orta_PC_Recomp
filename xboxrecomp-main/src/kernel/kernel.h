@@ -1096,6 +1096,13 @@ void recomp_idle_reset(void);
  * thread) call recomp_spin_wake() to release them at once. */
 void recomp_spin_wake(void);
 
+/* The GPU executor's loop. recomp_exec_idle() ends a pass that found nothing
+ * to execute: it yields for the first half millisecond of idling, then
+ * blocks (at most 1 ms) until recomp_exec_kick() -- called when a guest
+ * kicks off GPU work or starts polling for the GPU. */
+void recomp_exec_idle(int idle);
+void recomp_exec_kick(void);
+
 #ifdef _DEBUG
 #define XBOX_TRACE(subsystem, fmt, ...) xbox_log(XBOX_LOG_TRACE, subsystem, fmt, ##__VA_ARGS__)
 #else

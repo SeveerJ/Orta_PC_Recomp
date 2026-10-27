@@ -1364,7 +1364,15 @@ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
         }
 
         xbox_PtimerUpdate();
-        Sleep(0);  /* yield; the waiter is spinning on another core */
+        {
+            /* Nothing submitted that has not been executed: rest instead of
+             * going straight round (this loop was a whole core at 100% on a
+             * title screen). KickOff (the PFB trap) and any guest polling
+             * for the GPU wake it at once. */
+            uint32_t p = *(volatile uint32_t *)((char *)regs + NV2A_USER_DMA_PUT);
+            uint32_t g = *(volatile uint32_t *)((char *)regs + NV2A_USER_DMA_GET);
+            recomp_exec_idle(((p ^ g) & 0x0FFFFFFFu) == 0);
+        }
     }
     return 0;
 }
@@ -1473,8 +1481,10 @@ static LONG CALLBACK pfb_write_veh(PEXCEPTION_POINTERS ep)
     if (code == EXCEPTION_SINGLE_STEP && s_pfb_stepping) {
         volatile uint32_t *flush = (volatile uint32_t *)(g_pfb_page + 0x410);
         s_pfb_stepping = 0;
-        if (*flush & 0x00010000u)
+        if (*flush & 0x00010000u) {
             InterlockedAnd((volatile LONG *)flush, ~0x00010000);
+            recomp_exec_kick();        /* KickOff: new GPU work is coming */
+        }
         VirtualProtect(g_pfb_page, 0x1000, PAGE_READONLY, &old);
         ep->ContextRecord->EFlags &= ~0x100u;
         InterlockedIncrement(&g_pfb_traps);

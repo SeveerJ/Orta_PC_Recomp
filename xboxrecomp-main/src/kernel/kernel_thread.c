@@ -330,6 +330,53 @@ void recomp_spin_wake(void)
         SetEvent(s_spin_event);
 }
 
+static HANDLE s_exec_event;
+static volatile LONG s_exec_waiting, s_exec_kicked;
+
+void recomp_exec_kick(void)
+{
+    s_exec_kicked = 1;
+    if (s_exec_waiting && s_exec_event)
+        SetEvent(s_exec_event);
+}
+
+void recomp_exec_idle(int idle)
+{
+    static LONGLONG freq;
+    static int on = -1;
+    static LONGLONG idle_since;
+    LARGE_INTEGER now;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_EXEC_IDLE_WAIT");
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        freq = f.QuadPart ? f.QuadPart : 1;
+        s_exec_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+        on = !(e && *e == '0') && s_exec_event;
+    }
+    QueryPerformanceCounter(&now);
+    /* A kick usually comes just before the work does (KickOff raises the
+     * flush, then writes PUT): stay quick for another half millisecond. */
+    if (s_exec_kicked) {
+        s_exec_kicked = 0;
+        idle_since = idle ? now.QuadPart : 0;
+        Sleep(0);
+        return;
+    }
+    if (!idle || !idle_since) {
+        idle_since = idle ? now.QuadPart : 0;
+        Sleep(0);
+        return;
+    }
+    if (!on || now.QuadPart - idle_since < freq / 2000) {
+        Sleep(0);
+        return;
+    }
+    InterlockedExchange(&s_exec_waiting, 1);
+    WaitForSingleObject(s_exec_event, 1);
+    InterlockedExchange(&s_exec_waiting, 0);
+}
+
 void recomp_spin_slow(void)
 {
     static LONGLONG freq;
@@ -350,6 +397,7 @@ void recomp_spin_slow(void)
     QueryPerformanceCounter(&now);
     if (now.QuadPart - t_spin_last > freq / 500)      /* quiet for 2 ms: a new spin */
         t_spin_since = now.QuadPart;
+    recomp_exec_kick();             /* a guest waiting on the GPU: let it run */
     if (!wait_on || now.QuadPart - t_spin_since < freq / 2000) {
         SwitchToThread();
     } else {
