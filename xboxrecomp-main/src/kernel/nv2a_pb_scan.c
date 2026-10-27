@@ -141,8 +141,15 @@ static uint16_t s_seen_ix[8][2048];
 
 static void note(uint32_t subch, uint32_t method)
 {
-    uint32_t mi = (method >> 2) & 2047u, si = subch & 7u;
-    int i = (int)s_seen_ix[si][mi] - 1;
+    static int on = -1;
+    uint32_t mi, si;
+    int i;
+    /* Only the RECOMP_PB_SCAN report reads the tally: don't keep it in play. */
+    if (on < 0) on = getenv("RECOMP_PB_SCAN") != NULL;
+    if (!on) return;
+    mi = (method >> 2) & 2047u;
+    si = subch & 7u;
+    i = (int)s_seen_ix[si][mi] - 1;
     if (i >= 0 && i < s_seen_count && s_seen[i].method == method && s_seen[i].subch == subch) {
         s_seen[i].count++;
         return;

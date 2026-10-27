@@ -1451,6 +1451,81 @@ static void pcrtc_arm_write_trap(void)
  * tick tied the two together: every KickOff waited for whatever segment the
  * executor was drawing, so the game and the GPU took turns instead of
  * overlapping -- the profile had the game thread 80% inside that spin. */
+/*
+ * That thread spun on the register non-stop, which cost a whole CPU core for
+ * the life of the game: on a quad-core laptop, a quarter of the machine.
+ * Now the PFB page is write-trapped like PCRTC above: a guest write faults,
+ * is single-stepped, and the flush bit is cleared the moment it is set, so
+ * KickOff never waits and nothing spins. The thread stays as a backstop
+ * (a write made while another thread is mid-step goes untrapped) but sleeps
+ * 1 ms between looks. RECOMP_FAST_FLUSH=2 brings the old spinning thread
+ * back. */
+static char *g_pfb_page;
+static volatile LONG g_pfb_traps, g_pfb_backstop;
+static RECOMP_TLS int s_pfb_stepping;
+
+static LONG CALLBACK pfb_write_veh(PEXCEPTION_POINTERS ep)
+{
+    DWORD code = ep->ExceptionRecord->ExceptionCode, old;
+    if (!g_pfb_page)
+        return EXCEPTION_CONTINUE_SEARCH;
+    if (code == EXCEPTION_SINGLE_STEP && s_pfb_stepping) {
+        volatile uint32_t *flush = (volatile uint32_t *)(g_pfb_page + 0x410);
+        s_pfb_stepping = 0;
+        if (*flush & 0x00010000u)
+            InterlockedAnd((volatile LONG *)flush, ~0x00010000);
+        VirtualProtect(g_pfb_page, 0x1000, PAGE_READONLY, &old);
+        ep->ContextRecord->EFlags &= ~0x100u;
+        InterlockedIncrement(&g_pfb_traps);
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (code == EXCEPTION_ACCESS_VIOLATION
+            && ep->ExceptionRecord->ExceptionInformation[0] == 1) {
+        uintptr_t fault = ep->ExceptionRecord->ExceptionInformation[1];
+        if (fault >= (uintptr_t)g_pfb_page && fault < (uintptr_t)g_pfb_page + 0x1000) {
+            if (!VirtualProtect(g_pfb_page, 0x1000, PAGE_READWRITE, &old))
+                return EXCEPTION_CONTINUE_SEARCH;
+            s_pfb_stepping = 1;
+            ep->ContextRecord->EFlags |= 0x100u;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static int pfb_arm_write_trap(void)
+{
+    DWORD old;
+    g_pfb_page = (char *)g_nv2a_memory + 0x100000;
+    if (!AddVectoredExceptionHandler(1, pfb_write_veh)
+            || !VirtualProtect(g_pfb_page, 0x1000, PAGE_READONLY, &old)) {
+        g_pfb_page = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+static DWORD WINAPI nv2a_flush_backstop_thread(LPVOID param)
+{
+    volatile uint32_t *r = (volatile uint32_t *)((char *)param + 0x100410);
+    DWORD last = GetTickCount();
+    while (!InterlockedCompareExchange(&g_nv2a_ack_stop, 0, 0)) {
+        if (*r & 0x00010000u) {
+            InterlockedAnd((volatile LONG *)r, ~0x00010000);
+            InterlockedIncrement(&g_pfb_backstop);
+        }
+        if (GetTickCount() - last >= 10000) {
+            last = GetTickCount();
+            if (!recomp_diag_quiet())
+                fprintf(stderr, "  [FLUSH] last 10 s: %ld KickOff flushes trapped, %ld caught by"
+                                " the backstop\n", InterlockedExchange(&g_pfb_traps, 0),
+                        InterlockedExchange(&g_pfb_backstop, 0));
+        }
+        Sleep(1);
+    }
+    return 0;
+}
+
 static DWORD WINAPI nv2a_flush_ack_thread(LPVOID param)
 {
     volatile uint32_t *r = (volatile uint32_t *)((char *)param + 0x100410);
@@ -1499,10 +1574,14 @@ static void xbox_Nv2aAckStart(void)
     {
         const char *e = getenv("RECOMP_FAST_FLUSH");
         if (e && *e && strcmp(e, "0")) {
-            HANDLE h = CreateThread(NULL, 0, nv2a_flush_ack_thread, g_nv2a_memory, 0, NULL);
+            int trapped = strcmp(e, "2") != 0 && pfb_arm_write_trap();
+            HANDLE h = CreateThread(NULL, 0, trapped ? nv2a_flush_backstop_thread
+                                                     : nv2a_flush_ack_thread,
+                                    g_nv2a_memory, 0, NULL);
             if (h) {
                 CloseHandle(h);
-                fprintf(stderr, "  NV2A: fast flush ack on (KickOff no longer waits for the executor)\n");
+                fprintf(stderr, "  NV2A: fast flush ack on (%s)\n",
+                        trapped ? "PFB write trap, no spinning thread" : "spinning thread");
             }
         }
     }
