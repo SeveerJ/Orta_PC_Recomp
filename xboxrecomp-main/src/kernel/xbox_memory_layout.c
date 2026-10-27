@@ -1192,6 +1192,7 @@ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
                     *get = s_gpu_get_va ? (s_gpu_get_va & 0x0FFFFFFFu) : put;
                     s_get_written = *get;
                     s_get_written_valid = 1;
+                    recomp_spin_wake();    /* a guest may be polling GET */
                 }
                 /* PUT stuck for 5 s: show what the title's D3D is waiting
                  * on -- its own idea of the ring (device fields) beside the

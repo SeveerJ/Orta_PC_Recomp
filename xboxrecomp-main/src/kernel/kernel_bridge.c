@@ -3166,6 +3166,7 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
         long long now;
         int i;
 
+        recomp_spin_wake();             /* guests polling timers and vblank counts */
         {
             static int legacy = -1;     /* RECOMP_VBLANK_LEGACY=1: the old clock */
             if (legacy < 0) {

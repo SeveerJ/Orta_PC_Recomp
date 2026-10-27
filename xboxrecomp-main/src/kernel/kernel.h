@@ -1090,6 +1090,12 @@ int recomp_diag_quiet(void);
 void recomp_idle_backoff(void);
 void recomp_idle_reset(void);
 
+/* Guest polling loops (RECOMP_SPIN_HINT in recomp_types.h) block in
+ * recomp_spin_slow() once they have spun for a while; host threads that move
+ * what such loops wait on (the GPU executor publishing DMA_GET, the timer
+ * thread) call recomp_spin_wake() to release them at once. */
+void recomp_spin_wake(void);
+
 #ifdef _DEBUG
 #define XBOX_TRACE(subsystem, fmt, ...) xbox_log(XBOX_LOG_TRACE, subsystem, fmt, ##__VA_ARGS__)
 #else

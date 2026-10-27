@@ -312,6 +312,55 @@ NTSTATUS __stdcall xbox_NtYieldExecution(void)
 static RECOMP_TLS LONGLONG t_idle_last;
 static RECOMP_TLS unsigned t_idle_run;
 
+/* ── Polling loops (RECOMP_SPIN_HINT) ─────────────────────────────────
+ * Every 256 rounds of a marked loop: for the first half millisecond of a
+ * spin, give the time slice away; after that, block on an event a host
+ * thread sets when it moves something a guest may be waiting on, for at most
+ * 1 ms. A loop that is really a short countdown never gets that far, and one
+ * waiting on the GPU wakes as soon as the executor publishes progress.
+ * RECOMP_SPIN_WAIT=0 keeps only the yield. */
+RECOMP_TLS uint32_t g_spin_count;
+static RECOMP_TLS LONGLONG t_spin_last, t_spin_since;
+static HANDLE s_spin_event;
+static volatile LONG s_spin_waiters;
+
+void recomp_spin_wake(void)
+{
+    if (s_spin_waiters > 0 && s_spin_event)
+        SetEvent(s_spin_event);
+}
+
+void recomp_spin_slow(void)
+{
+    static LONGLONG freq;
+    static int wait_on = -1;
+    LARGE_INTEGER now;
+    if (wait_on < 0) {
+        const char *e = getenv("RECOMP_SPIN_WAIT");
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        freq = f.QuadPart ? f.QuadPart : 1;
+        if (!s_spin_event) {
+            HANDLE h = CreateEventA(NULL, FALSE, FALSE, NULL);
+            if (InterlockedCompareExchangePointer((PVOID volatile *)&s_spin_event, h, NULL) != NULL)
+                CloseHandle(h);
+        }
+        wait_on = !(e && *e == '0');
+    }
+    QueryPerformanceCounter(&now);
+    if (now.QuadPart - t_spin_last > freq / 500)      /* quiet for 2 ms: a new spin */
+        t_spin_since = now.QuadPart;
+    if (!wait_on || now.QuadPart - t_spin_since < freq / 2000) {
+        SwitchToThread();
+    } else {
+        InterlockedIncrement(&s_spin_waiters);
+        WaitForSingleObject(s_spin_event, 1);
+        InterlockedDecrement(&s_spin_waiters);
+    }
+    QueryPerformanceCounter(&now);
+    t_spin_last = now.QuadPart;
+}
+
 void recomp_idle_reset(void)
 {
     t_idle_run = 0;

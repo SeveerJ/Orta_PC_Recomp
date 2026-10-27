@@ -1052,6 +1052,19 @@ extern volatile uint64_t g_icall_guard_misses;
  * (icall_sites.dump), which is what lets the lifter guard a site with direct
  * calls on the next generation. Everything else is RECOMP_ICALL_SAFE.
  */
+/* Polling loops. The translator marks a one-block loop that only re-reads
+ * memory at a fixed address and compares (a game waiting on the GPU, a
+ * timer, another thread) with RECOMP_SPIN_HINT() before its back edge. On
+ * the Xbox the GPU and the other threads move the value while the CPU spins;
+ * here they are host threads, and a spinning guest thread costs a whole host
+ * core while starving them on small machines. The hint pauses the CPU each
+ * time round and, every 256 rounds, lets the runtime yield and then block
+ * until a host thread reports progress (or 1 ms). See recomp_spin_slow(). */
+extern RECOMP_TLS uint32_t g_spin_count;
+void recomp_spin_slow(void);
+#define RECOMP_SPIN_HINT() do { _mm_pause(); \
+    if (!(++g_spin_count & 255u)) recomp_spin_slow(); } while (0)
+
 #define RECOMP_ICALL_SAFE_AT(xbox_va, saved_esp, site) do { \
     uint32_t _va = (uint32_t)(xbox_va); \
     g_icall_trace[g_icall_trace_idx & (ICALL_TRACE_SIZE-1)] = _va; \

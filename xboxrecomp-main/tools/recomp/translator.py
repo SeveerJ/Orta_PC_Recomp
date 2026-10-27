@@ -179,6 +179,55 @@ def _edge_flag_plan(bb, sources, known):
     return m, conds
 
 
+# Polling loops (see RECOMP_SPIN_HINT in templates/runtime/recomp_types.h).
+# A single basic block that branches back to itself, reads memory at an
+# address its own instructions never change, and does nothing but move,
+# compare and arithmetic on registers: the shape of a CPU waiting for another
+# agent to change a value. A pointer walk (strlen) changes its address
+# register, and anything that stores, calls or touches the stack is real work.
+_POLL_LOOP_MNEMONICS = frozenset((
+    "mov", "movzx", "movsx", "cmp", "test", "sub", "add", "and", "or", "xor",
+    "lea", "nop", "pause", "neg", "not", "shr", "shl", "sar", "inc", "dec"))
+_POLL_LOOP_FULL_REG = {}
+for _full, _parts in (("eax", "eax ax al ah"), ("ebx", "ebx bx bl bh"),
+                      ("ecx", "ecx cx cl ch"), ("edx", "edx dx dl dh"),
+                      ("esi", "esi si"), ("edi", "edi di"), ("ebp", "ebp bp"),
+                      ("esp", "esp sp")):
+    for _p in _parts.split():
+        _POLL_LOOP_FULL_REG[_p] = _full
+
+
+def _is_poll_loop(bb, max_insns=12):
+    insns = bb.instructions
+    if not insns or len(insns) > max_insns:
+        return False
+    last = insns[-1]
+    if not last.is_cond_jump or last.jump_target != bb.start:
+        return False
+    written, loads = set(), []
+    for insn in insns[:-1]:
+        m = insn.mnemonic
+        if m not in _POLL_LOOP_MNEMONICS:
+            return False
+        ops = insn.operands or []
+        if ops and ops[0].type == "mem" and m not in ("cmp", "test"):
+            return False                          # a store: real work
+        for o in ops:
+            if o.type == "mem" and m != "lea":
+                if o.mem_seg:
+                    return False
+                loads.append(o)
+        if m not in ("cmp", "test", "nop", "pause") and ops and ops[0].type == "reg":
+            written.add(_POLL_LOOP_FULL_REG.get(ops[0].reg, ops[0].reg))
+    if "esp" in written:
+        return False
+    for o in loads:
+        regs = {_POLL_LOOP_FULL_REG.get(r, r) for r in (o.mem_base, o.mem_index) if r}
+        if not regs & written:
+            return True
+    return False
+
+
 def write_if_changed(path, text):
     """Write text to path only when it differs from what is already there.
 
@@ -2507,6 +2556,14 @@ class FunctionTranslator:
 
             stmts, out_state[bb.start] = lift_basic_block(
                 self.lifter, bb, flag_state=incoming)
+
+            # A polling loop pauses, and backs off, at its back edge.
+            if _is_poll_loop(bb):
+                back = f"goto loc_{bb.start:08X};"
+                for k in range(len(stmts) - 1, -1, -1):
+                    if back in stmts[k]:
+                        stmts.insert(k, "RECOMP_SPIN_HINT(); /* polling loop */")
+                        break
 
             # A join whose predecessors disagree: let each edge evaluate the
             # condition (see _edge_flag_plan). Blocks that may be entered
