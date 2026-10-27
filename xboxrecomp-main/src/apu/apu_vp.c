@@ -120,9 +120,20 @@ static void set_notify_status(MCPXAPUState *d, uint32_t v, int notifier,
  * Filter helpers
  * ============================================================ */
 
+/* Per-voice resampler state (see voice_resample). */
+typedef struct {
+    float s0[2], s1[2];      /* the source samples either side of pos */
+    double pos;              /* 0..1 between s0 and s1 */
+    float buf[64][2];        /* source samples fetched ahead */
+    int idx, len;
+    int primed;
+} VoiceResampler;
+static VoiceResampler s_rs[MCPX_HW_MAX_VOICES];
+
 static void voice_reset_filters(MCPXAPUState *d, uint16_t v)
 {
     assert(v < MCPX_HW_MAX_VOICES);
+    memset(&s_rs[v], 0, sizeof s_rs[v]);
     memset(&d->vp.filters[v].svf, 0, sizeof(d->vp.filters[v].svf));
     hrtf_filter_clear_history(&d->vp.filters[v].hrtf);
     if (d->vp.filters[v].resampler) {
@@ -1112,31 +1123,89 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
 }
 
 /* ============================================================
- * Voice resampling (simplified - no libsamplerate)
+ * Voice resampling
  *
- * Since libsamplerate is stubbed, we do a simple nearest-neighbor
- * resample. This gives us functional audio at the cost of quality.
+ * The voice's pitch says how fast to step through its samples: `rate` is
+ * output samples per source sample (libsamplerate's src_ratio in xemu), so a
+ * clip recorded at 22,050 Hz has rate ~2.18 at the 48 kHz output. This used
+ * to be stubbed -- every clip played one source sample per output sample,
+ * which put Orta's 22 kHz voices 2.2x too fast and too high. Now: linear
+ * interpolation between source samples, fetched ahead in small chunks and
+ * kept per voice across frames. Rate 1 keeps the direct path.
  * ============================================================ */
+
+/* Next source sample of voice v: 1, or 0/-1 when the voice has none. */
+static int rs_next(MCPXAPUState *d, uint16_t v, float out[2])
+{
+    VoiceResampler *r = &s_rs[v];
+    if (r->idx >= r->len) {
+        int n;
+        if (!voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
+                            NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE))
+            return 0;
+        n = voice_get_samples(d, v, r->buf, 64);
+        if (n <= 0) return n < 0 ? -1 : 0;
+        r->len = n;
+        r->idx = 0;
+    }
+    out[0] = r->buf[r->idx][0];
+    out[1] = r->buf[r->idx][1];
+    r->idx++;
+    return 1;
+}
 
 static int voice_resample(MCPXAPUState *d, uint16_t v, float samples[][2],
                           int requested_num, float rate)
 {
-    /* Without libsamplerate, just fetch raw samples at native rate.
-     * Rate < 1.0 means we need more source samples than output samples.
-     * For initial functionality, just get the samples directly. */
+    VoiceResampler *r = &s_rs[v];
     int sample_count = 0;
-    while (sample_count < requested_num) {
-        int active = voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
-                                    NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE);
-        if (!active) break;
+    double step;
 
-        int count = voice_get_samples(d, v, &samples[sample_count],
-                                      requested_num - sample_count);
-        if (count < 0) break;
-        if (count == 0) return -1;
-        sample_count += count;
+    if (!(rate > 0.0f) || fabsf(rate - 1.0f) < 1e-4f) {
+        /* Native rate: straight through, as before. */
+        r->primed = 0;
+        r->idx = r->len = 0;
+        while (sample_count < requested_num) {
+            int active = voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
+                                        NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE);
+            if (!active) break;
+            int count = voice_get_samples(d, v, &samples[sample_count],
+                                          requested_num - sample_count);
+            if (count < 0) break;
+            if (count == 0) return -1;
+            sample_count += count;
+        }
+        return sample_count;
     }
-    (void)rate; /* Ignored until we add proper resampling */
+
+    step = 1.0 / (double)rate;
+    if (!r->primed) {
+        int a = rs_next(d, v, r->s0);
+        if (a <= 0) return a < 0 ? -1 : 0;
+        if (rs_next(d, v, r->s1) <= 0) {
+            r->s1[0] = r->s0[0];
+            r->s1[1] = r->s0[1];
+        }
+        r->pos = 0.0;
+        r->primed = 1;
+    }
+    while (sample_count < requested_num) {
+        float f = (float)r->pos;
+        samples[sample_count][0] = r->s0[0] + (r->s1[0] - r->s0[0]) * f;
+        samples[sample_count][1] = r->s0[1] + (r->s1[1] - r->s0[1]) * f;
+        sample_count++;
+        r->pos += step;
+        while (r->pos >= 1.0) {
+            r->pos -= 1.0;
+            r->s0[0] = r->s1[0];
+            r->s0[1] = r->s1[1];
+            if (rs_next(d, v, r->s1) <= 0) {
+                /* The voice ran out (end of a one-shot clip): stop here. */
+                r->primed = 0;
+                return sample_count;
+            }
+        }
+    }
     return sample_count;
 }
 
