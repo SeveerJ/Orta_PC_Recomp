@@ -975,10 +975,29 @@ void recomp_unimpl(const char *text, uint32_t va)
  * Same walk, but an entry that is both self-linked and still the head's
  * first entry ends that list's pass, and is reported. A cap per list stops
  * any other cycle the same way. */
+/* DirectSound's "busy" count at this+0x324: the idle-voice trap must not
+ * unlink voices while it is non-zero. On the Xbox the DPC and the title never
+ * ran at the same instant; here they are host threads, and a lost update
+ * once left the count at -1 -- every idle trap after that was refused (30,000
+ * times for one voice), the title waited on that voice, and the picture froze
+ * after the first boss while the music played on. Our own updates are atomic;
+ * sub_002C6028 repairs a count that is negative, or stuck while no walk runs. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#define DS_ATOMIC_ADD(p, n) _InterlockedExchangeAdd((volatile long *)(p), (long)(n))
+#define DS_ATOMIC_CAS(p, nv, ov) _InterlockedCompareExchange((volatile long *)(p), (long)(nv), (long)(ov))
+#else
+#define DS_ATOMIC_ADD(p, n) __atomic_fetch_add((volatile int32_t *)(p), (int32_t)(n), __ATOMIC_SEQ_CST)
+#define DS_ATOMIC_CAS(p, nv, ov) __sync_val_compare_and_swap((volatile int32_t *)(p), (int32_t)(ov), (int32_t)(nv))
+#endif
+static volatile int32_t s_ds_walking;
+#define DS_BUSY_ADD(self, n) DS_ATOMIC_ADD(&GMEM32((self) + 0x324u), (n))
+
 void sub_002C5F25(void)
 {
     uint32_t self = g_ecx, k;
     static int reported;
+    DS_ATOMIC_ADD(&s_ds_walking, 1);
 
     g_ecx = self;
     orta_call_guest(0x002C5EC2u, 0x002C5F33u);
@@ -1016,7 +1035,7 @@ void sub_002C5F25(void)
             uint32_t obj = node - 0x4Cu, next;
             g_ecx = obj;
             orta_call_guest(GMEM32(GMEM32(obj) + 0x14u), 0x002C5F4Cu);
-            GMEM32(self + 0x324u) += 1;
+            DS_BUSY_ADD(self, 1);
             next = GMEM32(node);
             if (next == node) {
                 next = GMEM32(head);
@@ -1028,7 +1047,7 @@ void sub_002C5F25(void)
                     next = head;
                 }
             }
-            GMEM32(self + 0x324u) -= 1;
+            DS_BUSY_ADD(self, -1);
             node = next;
             /* A pass legitimately takes thousands of steps when many voices
              * remove themselves (each removal restarts the walk), so only a
@@ -1055,9 +1074,9 @@ void sub_002C5F25(void)
         for (;;) {
             uint32_t e;
             g_esp -= 4; GMEM32(g_esp) = GMEM32(lh);
-            GMEM32(self + 0x324u) += 1;
+            DS_BUSY_ADD(self, 1);
             orta_call_guest(0x002C1140u, 0x002C5F84u);   /* stdcall(1): pops its argument */
-            GMEM32(self + 0x324u) -= 1;
+            DS_BUSY_ADD(self, -1);
             e = g_eax;
             if (e == lh || ++steps > 2000000u)
                 break;
@@ -1065,6 +1084,7 @@ void sub_002C5F25(void)
             orta_call_guest(GMEM32(GMEM32(e - 0x54u) + 0x14u), 0x002C5F97u);
         }
     }
+    DS_ATOMIC_ADD(&s_ds_walking, -1);
 }
 
 /* ── DirectSound idle-voice trap handler (0x2C6028) ───────────────────────
@@ -1089,6 +1109,21 @@ void sub_002C6028(void)
     uint32_t self = g_ecx, h = GMEM32(g_esp + 4);
     static int reported;
     static int deferred_rep;
+    static unsigned stuck;
+    static int repaired;
+
+    {   /* Repair a busy count that a lost update has broken (see above). */
+        int32_t busy = (int32_t)GMEM32(self + 0x324u);
+        if (busy < 0 || (busy > 0 && !s_ds_walking && ++stuck > 256)) {
+            if (repaired++ < 16)
+                fprintf(stderr, "[DSOUND] busy count was %d with no walk running -- reset to 0\n",
+                        busy);
+            DS_ATOMIC_CAS(&GMEM32(self + 0x324u), 0, busy);
+            stuck = 0;
+        } else if (busy == 0) {
+            stuck = 0;
+        }
+    }
 
     /* Tell the APU which idle voices have no live owner (so it may evict
      * them) -- and, by omission, which ones it must keep trapping. */
