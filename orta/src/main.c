@@ -227,6 +227,18 @@ extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
 #define APU_TRAP_BASE 0xFE800000u
 #define APU_TRAP_END  0xFE880000u
 
+/* The exception nothing handled: whatever kind it is, say so and get the
+ * log onto the disk before Windows ends the process. */
+static LONG WINAPI last_chance_filter(PEXCEPTION_POINTERS ep)
+{
+    fprintf(stderr, "[CRASH] unhandled exception 0x%08lX at exe offset 0x%llX, guest esp=0x%08X eax=0x%08X\n",
+            (unsigned long)ep->ExceptionRecord->ExceptionCode,
+            (unsigned long long)(ep->ContextRecord->Rip - (uintptr_t)GetModuleHandleA(NULL)),
+            g_esp, g_eax);
+    fflush(stderr);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
 {
     /* Host stack overflow: almost always a guest loop that the translator
@@ -564,6 +576,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Unbuffered output for immediate visibility during debugging */
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    /* A normal start (not from a script that keeps stderr) used to throw the
+     * engine's log away, crash reports included, so a crash nobody else could
+     * reproduce left nothing to go on. Keep it as session_log.txt next to the
+     * exe; the previous session's becomes session_log_previous.txt, so a crash
+     * report survives the player starting the game again. Buffered (flushed
+     * every couple of seconds and on a crash). The dev-only reports stay off:
+     * recomp_diag_quiet() has already decided this is a normal start. */
+    {
+        extern int recomp_diag_quiet(void);
+        char dir[MAX_PATH], cur[MAX_PATH + 32], prev[MAX_PATH + 32], *slash;
+        DWORD n = GetModuleFileNameA(NULL, dir, MAX_PATH);
+        if (recomp_diag_quiet() && n && n < MAX_PATH && (slash = strrchr(dir, '\\')) != NULL) {
+            slash[1] = 0;
+            snprintf(cur, sizeof cur, "%ssession_log.txt", dir);
+            snprintf(prev, sizeof prev, "%ssession_log_previous.txt", dir);
+            MoveFileExA(cur, prev, MOVEFILE_REPLACE_EXISTING);
+            if (freopen(cur, "w", stderr)) {
+                SYSTEMTIME st;
+                setvbuf(stderr, NULL, _IOFBF, 1 << 16);
+                GetLocalTime(&st);
+                fprintf(stderr, "Panzer Dragoon Orta PC session %04u-%02u-%02u %02u:%02u:%02u (built %s)\n",
+                        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, __DATE__);
+                SetUnhandledExceptionFilter(last_chance_filter);
+            }
+        }
+    }
 
     printf("=== YOUR_GAME_NAME - Static Recompilation ===\n");
     printf("Loading XBE...\n");

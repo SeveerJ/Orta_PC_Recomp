@@ -1519,8 +1519,14 @@ static int pfb_arm_write_trap(void)
 static DWORD WINAPI nv2a_flush_backstop_thread(LPVOID param)
 {
     volatile uint32_t *r = (volatile uint32_t *)((char *)param + 0x100410);
-    DWORD last = GetTickCount();
+    DWORD last = GetTickCount(), last_flush = last;
     while (!InterlockedCompareExchange(&g_nv2a_ack_stop, 0, 0)) {
+        /* The session log is buffered: get it to disk every 2 s, so a game
+         * the player has to kill still leaves its last moments behind. */
+        if (GetTickCount() - last_flush >= 2000) {
+            last_flush = GetTickCount();
+            fflush(stderr);
+        }
         if (*r & 0x00010000u) {
             InterlockedAnd((volatile LONG *)r, ~0x00010000);
             InterlockedIncrement(&g_pfb_backstop);
