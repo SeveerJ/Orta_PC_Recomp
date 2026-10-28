@@ -111,6 +111,11 @@ static int streamlog_on(void)
     return on;
 }
 static unsigned char s_stream_dry[MCPX_HW_MAX_VOICES];
+/* Music and ambience are stereo buffer voices (Orta plays no stream voices):
+ * the log covers those too. */
+#define VLOG_VOICE(d, v) (streamlog_on() && (voice_get_mask((d), (uint16_t)(v), \
+    NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) || \
+    voice_get_mask((d), (uint16_t)(v), NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_STEREO)))
 #define STREAMLOG(...) do { if (streamlog_on()) { \
     fprintf(stderr, "[STREAM %lu] ", (unsigned long)GetTickCount()); \
     fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } } while (0)
@@ -223,8 +228,7 @@ static void voice_off(MCPXAPUState *d, uint16_t v)
     }
     voice_set_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
                    NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-    if (streamlog_on() && voice_get_mask(d, v, NV_PAVS_VOICE_CFG_FMT,
-                                         NV_PAVS_VOICE_CFG_FMT_DATA_TYPE))
+    if (VLOG_VOICE(d, v))
         STREAMLOG("voice %u OFF (was %s)%s", (unsigned)v, was_active ? "playing" : "already off",
                   (!was_active && !renotify) ? " -- no done notification" : "");
     if (!was_active && !renotify)
@@ -322,11 +326,23 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
 
     case NV1BA0_PIO_VOICE_ON: {
         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
-        if (streamlog_on() && voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
-                                              NV_PAVS_VOICE_CFG_FMT_DATA_TYPE)) {
+        if (VLOG_VOICE(d, selected_handle)) {
             s_stream_dry[selected_handle] = 0;
-            STREAMLOG("voice %u ON  persist=%d ssl A=%u B=%u index=%d paused=%d",
+            STREAMLOG("voice %u ON  %s loop=%d cbo=%u ebo=%u lbo=%u pitch=%d "
+                      "persist=%d ssl A=%u B=%u index=%d paused=%d",
                 (unsigned)selected_handle,
+                voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
+                               NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) ? "STREAM" : "buffer",
+                (int)(voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
+                                     NV_PAVS_VOICE_CFG_FMT_LOOP) != 0),
+                (unsigned)voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_PAR_OFFSET,
+                                         NV_PAVS_VOICE_PAR_OFFSET_CBO),
+                (unsigned)voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_PAR_NEXT,
+                                         NV_PAVS_VOICE_PAR_NEXT_EBO),
+                (unsigned)voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CUR_PSH_SAMPLE,
+                                         NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO),
+                (int)(int16_t)voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_TAR_PITCH_LINK,
+                                             NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH),
                 (int)(voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
                                      NV_PAVS_VOICE_CFG_FMT_PERSIST) != 0),
                 d->vp.ssl[selected_handle].count[0], d->vp.ssl[selected_handle].count[1],
@@ -419,8 +435,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
 
     case NV1BA0_PIO_VOICE_RELEASE: {
         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
-        if (streamlog_on() && voice_get_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_CFG_FMT,
-                                              NV_PAVS_VOICE_CFG_FMT_DATA_TYPE))
+        if (VLOG_VOICE(d, selected_handle))
             STREAMLOG("voice %u RELEASE", (unsigned)selected_handle);
 
         bool locked = is_voice_locked(d, (uint16_t)selected_handle);
@@ -453,6 +468,9 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
 
     case NV1BA0_PIO_VOICE_PAUSE: {
         static int logged;
+        if (VLOG_VOICE(d, argument & NV1BA0_PIO_VOICE_PAUSE_HANDLE))
+            STREAMLOG("voice %u %s", (unsigned)(argument & NV1BA0_PIO_VOICE_PAUSE_HANDLE),
+                      (argument & NV1BA0_PIO_VOICE_PAUSE_ACTION) ? "PAUSE" : "RESUME");
         if (logged < 400) {
             logged++;
             fprintf(stderr, "[APU] VOICE_PAUSE voice %u %s\n",
@@ -560,11 +578,27 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
                        NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, argument);
         break;
     case NV1BA0_PIO_SET_VOICE_BUF_CBO:
+        if (VLOG_VOICE(d, d->regs[NV_PAPU_FECV]))
+            STREAMLOG("voice %u set CBO %u (active %d)", (unsigned)d->regs[NV_PAPU_FECV],
+                      (unsigned)argument, (int)voice_get_mask(d, (uint16_t)d->regs[NV_PAPU_FECV],
+                      NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE));
         voice_set_mask(d, (uint16_t)d->regs[NV_PAPU_FECV],
                        NV_PAVS_VOICE_PAR_OFFSET,
                        NV_PAVS_VOICE_PAR_OFFSET_CBO, argument);
         break;
     case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
+        {   /* the game topping up a buffer: logged at most a few times a second per voice */
+            static DWORD last[MCPX_HW_MAX_VOICES];
+            uint16_t cv = (uint16_t)d->regs[NV_PAPU_FECV];
+            if (cv < MCPX_HW_MAX_VOICES && VLOG_VOICE(d, cv) && GetTickCount() - last[cv] > 250) {
+                last[cv] = GetTickCount();
+                STREAMLOG("voice %u set EBO %u (cbo %u, active %d)", (unsigned)cv, (unsigned)argument,
+                          (unsigned)voice_get_mask(d, cv, NV_PAVS_VOICE_PAR_OFFSET,
+                                                   NV_PAVS_VOICE_PAR_OFFSET_CBO),
+                          (int)voice_get_mask(d, cv, NV_PAVS_VOICE_PAR_STATE,
+                                              NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE));
+            }
+        }
         voice_set_mask(d, (uint16_t)d->regs[NV_PAPU_FECV],
                        NV_PAVS_VOICE_PAR_NEXT,
                        NV_PAVS_VOICE_PAR_NEXT_EBO, argument);
@@ -1166,6 +1200,9 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                 cbo = lbo;
             } else {
                 cbo = ebo;
+                if (VLOG_VOICE(d, v))
+                    STREAMLOG("voice %u reached the end of its buffer (ebo %u)", (unsigned)v,
+                              (unsigned)ebo);
                 voice_off(d, (uint16_t)v);
             }
         }
