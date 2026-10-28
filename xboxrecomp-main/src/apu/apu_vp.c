@@ -585,6 +585,10 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
         voice_set_mask(d, (uint16_t)d->regs[NV_PAPU_FECV],
                        NV_PAVS_VOICE_PAR_OFFSET,
                        NV_PAVS_VOICE_PAR_OFFSET_CBO, argument);
+        /* The game moved the play position: samples the resampler fetched
+         * ahead from the old position no longer follow. */
+        if (d->regs[NV_PAPU_FECV] < MCPX_HW_MAX_VOICES)
+            memset(&s_rs[d->regs[NV_PAPU_FECV]], 0, sizeof s_rs[0]);
         break;
     case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
         {   /* the game topping up a buffer: logged at most a few times a second per voice */
