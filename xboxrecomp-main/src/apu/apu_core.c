@@ -361,6 +361,22 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
     d->monitor.queued_bytes_low = 1024;
     d->monitor.queued_bytes_high = 3072;
 
+    /* 5.1 when settings.ini asks for it (Speakers = 5.1); XAudio2 folds it
+     * down itself if the device has fewer speakers. Stereo otherwise, or if
+     * a six-channel voice can't be made. */
+    {
+        const char *sp = getenv("RECOMP_AUDIO_SPEAKERS");
+        if (sp && atoi(sp) == 6) {
+            int dev = xa2_init_channels(6);
+            if (dev) {
+                g_apu_out_channels = 6;
+                fprintf(stderr, "[APU] Using XAudio2, 5.1 output (the device has %d channel(s))\n", dev);
+                return;
+            }
+            fprintf(stderr, "[APU] 5.1 output unavailable, using stereo\n");
+        }
+    }
+
     /* Try XAudio2 first (lower latency) */
     if (xa2_init()) {
         fprintf(stderr, "[APU] Using XAudio2 audio backend\n");
@@ -443,27 +459,41 @@ static int apu_out_enabled(void)
     return on;
 }
 
-/* Set by the settings menu: volume x effects level (-1: settings.ini),
- * and silence while the menu holds the game. */
-volatile float g_apu_live_gain = -1.0f;
+/* Player levels (see apu_state.h): settings.ini through the environment
+ * at first use, then the settings menu writes them live. g_apu_mute is
+ * silence while the menu holds the game. */
+volatile float g_apu_gain_master = -1.0f;
+volatile float g_apu_gain_music  = -1.0f;
+volatile float g_apu_gain_sfx    = -1.0f;
 volatile long  g_apu_mute;
+int g_apu_out_channels = 2;
+
+static float env_float(const char *name, float def)
+{
+    const char *e = getenv(name);
+    return e && *e ? (float)atof(e) : def;
+}
+
+void apu_gains_init(void)
+{
+    static volatile long done;
+    if (done)
+        return;
+    /* RECOMP_APU_GAIN 0..1 (Volume/100; 0.5 is unity), the others 0..2. */
+    if (g_apu_gain_master < 0.0f) g_apu_gain_master = env_float("RECOMP_APU_GAIN", 0.5f) * 2.0f;
+    if (g_apu_gain_music  < 0.0f) g_apu_gain_music  = env_float("RECOMP_APU_MUSIC", 0.7f);
+    if (g_apu_gain_sfx    < 0.0f) g_apu_gain_sfx    = env_float("RECOMP_APU_SFX", 0.7f);
+    done = 1;
+}
 
 static void apu_fifo_push(const int16_t (*src)[2], int n)
 {
     int i;
     static FILE *raw;
     static long raw_bytes = -1;
-    static float gain = -1.0f;
-    if (gain < 0.0f) {
-        /* Master volume (settings.ini Volume) times the effects level
-         * (SfxVolume, default 70%), times 2 for the headroom the DSP
-         * mixdown now keeps (apu_dsp.c). */
-        const char *e = getenv("RECOMP_APU_GAIN");
-        const char *x = getenv("RECOMP_APU_SFX");
-        gain = (e ? (float)atof(e) : 0.5f) * (x ? (float)atof(x) : 0.7f) * 2.0f;
-    }
-    float live = g_apu_mute ? 0.0f
-               : g_apu_live_gain >= 0.0f ? g_apu_live_gain * 2.0f : gain;
+    /* The volume levels are applied upstream now: music and effects per
+     * voice (apu_vp.c), master ahead of the limiter (apu_dsp.c). */
+    float live = g_apu_mute ? 0.0f : 1.0f;
     if (raw_bytes < 0) {
         /* RECOMP_APU_RAW=path: the first 90 s of output as raw 48 kHz
          * stereo s16, for listening to or analysing away from the run. */
@@ -506,9 +536,70 @@ static void apu_fifo_mix(int16_t (*dst)[2], int n)
     }
 }
 
+/* 5.1: the same queue-then-submit as the stereo path below, six wide. */
+static int16_t s_fifo6[APU_FIFO_SAMPLES][6];
+static uint32_t s_fifo6_r, s_fifo6_w;
+
+static void monitor_frame6(MCPXAPUState *d)
+{
+    static DWORD last;
+    static int peak[6];
+    DWORD now = GetTickCount();
+    int i, c, n = xa2_get_buffer_size();
+
+    for (i = 0; i < 256; i++) {
+        if (s_fifo6_w - s_fifo6_r >= APU_FIFO_SAMPLES)
+            s_fifo6_r++;                                  /* overrun: drop oldest */
+        for (c = 0; c < 6; c++) {
+            int16_t s = g_apu_mute ? 0 : d->monitor.frame_buf6[i][c];
+            int a = s < 0 ? -s : s;
+            if (a > peak[c]) peak[c] = a;
+            s_fifo6[s_fifo6_w % APU_FIFO_SAMPLES][c] = s;
+        }
+        s_fifo6_w++;
+    }
+    memset(d->monitor.frame_buf6, 0, sizeof(d->monitor.frame_buf6));
+    if (now - last > 10000) {
+        fprintf(stderr, "[APU] 5.1 output peaks over the last %lu ms: front %d/%d, centre %d, "
+                "LFE %d, rear %d/%d\n", (unsigned long)(last ? now - last : 0),
+                peak[0], peak[1], peak[2], peak[3], peak[4], peak[5]);
+        memset(peak, 0, sizeof peak);
+        last = now;
+    }
+    if ((int)(s_fifo6_w - s_fifo6_r) < n)
+        return;
+
+    {
+        static int16_t out[1024][6];        /* XA2_BUF_SAMPLES */
+        int done = 0;
+        if (n > 1024) n = 1024;
+        for (i = 0; i < n; i++, s_fifo6_r++)
+            memcpy(out[i], s_fifo6[s_fifo6_r % APU_FIFO_SAMPLES], sizeof out[i]);
+        /* The software mixer (titles that play through the HLE DirectSound)
+         * is stereo: it goes to the front pair. */
+        while (done < n && !g_audio_muted) {
+            int chunk = n - done < MIXER_FRAME_SAMPLES ? n - done : MIXER_FRAME_SAMPLES;
+            memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
+            mixer_render(d->monitor.frame_buf, chunk);
+            for (i = 0; i < chunk; i++)
+                for (c = 0; c < 2; c++) {
+                    int32_t v = out[done + i][c] + d->monitor.frame_buf[i][c];
+                    out[done + i][c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+                }
+            done += chunk;
+        }
+        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
+        xa2_submit_samples((const int16_t *)out, n);
+    }
+}
+
 void mcpx_apu_monitor_frame(MCPXAPUState *d)
 {
     if ((d->ep_frame_div + 1) % 8) {
+        return;
+    }
+    if (g_apu_out_channels == 6 && xa2_is_active()) {
+        monitor_frame6(d);
         return;
     }
     if (apu_out_enabled()) {

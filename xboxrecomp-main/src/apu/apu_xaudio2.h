@@ -9,6 +9,10 @@
 /* Initialize XAudio2. Returns 1 on success, 0 on failure. */
 int xa2_init(void);
 
+/* Initialize with 2 (stereo) or 6 (5.1) channels of input. Returns the
+ * device's own channel count on success, 0 on failure. */
+int xa2_init_channels(int channels);
+
 /* Shut down XAudio2 and release all resources. */
 void xa2_shutdown(void);
 

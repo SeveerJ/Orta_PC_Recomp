@@ -1478,9 +1478,29 @@ static void voice_process(MCPXAPUState *d,
         }
     }
 
+    /* Music or effects level. Orta's music plays on 2D stereo voices at
+     * 44.1 kHz (pitch about -501); effects are mono or 3D, mostly at lower
+     * rates. Multipass voices re-mix bins that were already scaled. */
+    float cat = 1.0f;
+    if (!multipass) {
+        static uint8_t s_music_seen[MCPX_HW_MAX_VOICES];
+        static int s_music_logs;
+        int music = stereo && v >= MCPX_HW_MAX_3D_VOICES && p >= -1200 && p <= 300;
+        cat = music ? g_apu_gain_music : g_apu_gain_sfx;
+        if (music != s_music_seen[v]) {
+            s_music_seen[v] = (uint8_t)music;
+            if (music && s_music_logs < 40) {
+                s_music_logs++;
+                fprintf(stderr, "[AUDIO] voice %u is music (stereo, pitch %d)\n",
+                        (unsigned)v, (int)p);
+            }
+        }
+        if (cat < 0.0f) cat = 0.7f;
+    }
+
     /* Mix into bins */
     for (int b = 0; b < 8; b++) {
-        float g = ea_value;
+        float g = ea_value * cat;
         float hr;
         if ((v < MCPX_HW_MAX_3D_VOICES) && (b < 4)) {
             hr = (float)(1 << d->vp.hrtf_headroom);
@@ -1565,6 +1585,7 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
                         float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
 {
     memset(d->vp.sample_buf, 0, sizeof(d->vp.sample_buf));
+    apu_gains_init();
 
     for (int list = 0; list < 3; list++) {
         hwaddr top, current, next;

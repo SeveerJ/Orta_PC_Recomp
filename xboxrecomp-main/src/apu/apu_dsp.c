@@ -139,6 +139,13 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
     (void)d;
 }
 
+/* Anything above 0.8 eased towards 1.0 rather than chopped off. */
+static float soft_limit(float x)
+{
+    float a = fabsf(x);
+    return a > 0.8f ? copysignf(0.8f + 0.2f * tanhf((a - 0.8f) / 0.2f), x) : x;
+}
+
 void mcpx_apu_dsp_frame(MCPXAPUState *d,
                          float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
 {
@@ -157,6 +164,10 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
      */
 
     int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
+    float master;
+
+    apu_gains_init();
+    master = g_apu_gain_master < 0.0f ? 1.0f : g_apu_gain_master;
 
     if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
         for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
@@ -187,6 +198,28 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
              * pairing the guest set up -- bins 6/7 and 8/9 arrive with matched
              * counts. This is not what a real EP does; it is the cheapest
              * mixdown that stops discarding audio. */
+            if (g_apu_out_channels == 6) {
+                /* 5.1: each speaker bin to its own speaker. The 3D voices'
+                 * crosstalk pairs carry front (6/7) and back (8/9) position,
+                 * so the back pair goes to the rear speakers; effect sends
+                 * are a quiet wet signal all round, as in stereo. */
+                float fx_l = 0.0f, fx_r = 0.0f, o[6];
+                for (int b = 10; b < NUM_MIXBINS; ++b) {
+                    if (b & 1) fx_r += 0.1f * mixbins[b][i];
+                    else       fx_l += 0.1f * mixbins[b][i];
+                }
+                o[0] = mixbins[0][i] + 0.5f * mixbins[6][i] + fx_l;
+                o[1] = mixbins[1][i] + 0.5f * mixbins[7][i] + fx_r;
+                o[2] = mixbins[2][i];
+                o[3] = mixbins[3][i];
+                o[4] = mixbins[4][i] + 0.5f * mixbins[8][i] + 0.5f * fx_l;
+                o[5] = mixbins[5][i] + 0.5f * mixbins[9][i] + 0.5f * fx_r;
+                for (int c = 0; c < 6; c++) {
+                    float x = soft_limit(o[c] * 0.5f * master);
+                    d->monitor.frame_buf6[off + i][c] = (int16_t)(x * 32767.0f);
+                }
+                continue;
+            }
             float left, right;
             if (mcpx_apu_mixdown_all() == 1) {
                 /* The speaker bins and the 3D (crosstalk) pairs, at speaker
@@ -219,13 +252,12 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
              * which is the "effects too loud and crackling". Halved here
              * (apu_fifo_push gives the 6 dB back) and anything above 0.8
              * eased towards 1.0 rather than chopped off. */
-            left *= 0.5f;
-            right *= 0.5f;
-            {
-                float al = fabsf(left), ar = fabsf(right);
-                if (al > 0.8f) left = copysignf(0.8f + 0.2f * tanhf((al - 0.8f) / 0.2f), left);
-                if (ar > 0.8f) right = copysignf(0.8f + 0.2f * tanhf((ar - 0.8f) / 0.2f), right);
-            }
+            /* The master volume goes in here, ahead of the limiter, so
+             * turning it up eases into the limit instead of clipping. */
+            left *= 0.5f * master;
+            right *= 0.5f * master;
+            left = soft_limit(left);
+            right = soft_limit(right);
 
             /* Convert to 16-bit and write (not accumulate) into frame buffer.
              * Each of the 8 sub-frames writes its own 32-sample slice. */

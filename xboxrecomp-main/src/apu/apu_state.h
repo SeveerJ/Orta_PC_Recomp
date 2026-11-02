@@ -505,6 +505,7 @@ struct MCPXAPUState {
     struct {
         McpxApuDebugMonitorPoint point;
         int16_t frame_buf[256][2];
+        int16_t frame_buf6[256][6];   /* 5.1 output: FL FR C LFE BL BR */
         void *stream; /* SDL_AudioStream* - stubbed */
         int queued_bytes_low, queued_bytes_high;
     } monitor;
@@ -513,6 +514,13 @@ struct MCPXAPUState {
 /* ============================================================
  * Forward declarations for APU sub-module functions
  * ============================================================ */
+
+/* Player volume levels and speaker layout (apu_core.c). Gains are linear:
+ * master 1.0 is settings.ini Volume 50; music and effects 0.7 are 70. They
+ * may be changed live (the settings menu) and are -1 until first read. */
+extern volatile float g_apu_gain_master, g_apu_gain_music, g_apu_gain_sfx;
+extern int g_apu_out_channels;          /* 2, or 6 for 5.1 */
+void apu_gains_init(void);
 
 /* VP functions */
 void mcpx_apu_vp_init(MCPXAPUState *d);

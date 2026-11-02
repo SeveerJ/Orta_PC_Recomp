@@ -34,7 +34,7 @@ extern volatile float g_present_crop[2];      /* -1: settings.ini */
 extern int  (*g_wndproc_hook)(HWND, UINT, WPARAM, LPARAM);
 extern int  xbox_FramebufferIsFullscreen(void);
 extern HWND xbox_FramebufferWindowHwnd(void);
-extern volatile float g_apu_live_gain;        /* -1: settings.ini */
+extern volatile float g_apu_gain_master, g_apu_gain_music, g_apu_gain_sfx;
 extern volatile long  g_apu_mute;
 /* recomp_manual.c */
 extern volatile float g_rumble_scale;         /* -1: settings.ini */
@@ -52,8 +52,10 @@ typedef struct {
     int winh;           /* window height when not fullscreen */
     int vsync;
     int fps_cap;
-    int volume;         /* 0..100 */
-    int sfx;            /* 0..100, effects relative to music */
+    int volume;         /* 0..100, master */
+    int music;          /* 0..200, 70 = the original mix */
+    int sfx;            /* 0..200 */
+    int speakers;       /* 0 stereo, 1 5.1 */
     int cropx, cropy;   /* 0..20 percent per side */
     int rumble;
     int rumble_str;     /* 0..100 */
@@ -92,7 +94,9 @@ static void cfg_load(void)
     s_cfg.vsync      = env_int("RECOMP_VSYNC", 0) != 0;
     s_cfg.fps_cap    = env_int("RECOMP_FPS_CAP", 60);
     s_cfg.volume     = clampi(env_pct("RECOMP_APU_GAIN", 50), 0, 100);
-    s_cfg.sfx        = clampi(env_pct("RECOMP_APU_SFX", 70), 0, 100);
+    s_cfg.music      = clampi(env_pct("RECOMP_APU_MUSIC", 70), 0, 200);
+    s_cfg.sfx        = clampi(env_pct("RECOMP_APU_SFX", 70), 0, 200);
+    s_cfg.speakers   = env_int("RECOMP_AUDIO_SPEAKERS", 2) == 6;
     s_cfg.cropx      = clampi(env_int("RECOMP_CROP_X", 0), 0, 20);
     s_cfg.cropy      = clampi(env_int("RECOMP_CROP_Y", 0), 0, 20);
     s_cfg.rumble     = env_int("RECOMP_RUMBLE", 1) != 0;
@@ -106,7 +110,9 @@ static void cfg_apply_live(void)
     g_present_vsync = s_cfg.vsync;
     g_present_crop[0] = (float)s_cfg.cropx / 100.0f;
     g_present_crop[1] = (float)s_cfg.cropy / 100.0f;
-    g_apu_live_gain = (float)s_cfg.volume / 100.0f * (float)s_cfg.sfx / 100.0f;
+    g_apu_gain_master = (float)s_cfg.volume / 50.0f;      /* 50 = unity */
+    g_apu_gain_music  = (float)s_cfg.music / 100.0f;
+    g_apu_gain_sfx    = (float)s_cfg.sfx / 100.0f;
     g_rumble_scale = s_cfg.rumble ? (float)s_cfg.rumble_str / 100.0f : 0.0f;
     if (s_cfg.fullscreen != xbox_FramebufferIsFullscreen()) {
         HWND h = xbox_FramebufferWindowHwnd();
@@ -187,10 +193,13 @@ static void cfg_save(void)
         "VSync = %d\r\n"
         "\r\n"
         "[Audio]\r\n"
-        "; 0 to 100.\r\n"
+        "; Master volume, 0 to 100.\r\n"
         "Volume = %d\r\n"
-        "; Sound effects relative to music, 0 to 100.\r\n"
+        "; Music and sound effects, 0 to 200 (70 is the original mix; above 100 boosts).\r\n"
+        "MusicVolume = %d\r\n"
         "SfxVolume = %d\r\n"
+        "; Stereo, or 5.1 for surround speakers. Takes effect when the game starts.\r\n"
+        "Speakers = %s\r\n"
         "\r\n"
         "[Controller]\r\n"
         "; 1 = the pad rumbles when the game asks it to.\r\n"
@@ -204,7 +213,7 @@ static void cfg_save(void)
         "ShowOnStart = %d\r\n",
         orta_res_value(s_cfg.res), s_cfg.widescreen, s_cfg.cropx, s_cfg.cropy,
         s_cfg.fullscreen, s_cfg.winh, s_cfg.fps_cap, s_cfg.vsync,
-        s_cfg.volume, s_cfg.sfx, s_cfg.rumble, s_cfg.rumble_str, launcher_show);
+        s_cfg.volume, s_cfg.music, s_cfg.sfx, s_cfg.speakers ? "5.1" : "Stereo", s_cfg.rumble, s_cfg.rumble_str, launcher_show);
     if (adv)
         fprintf(f, "\r\n%s", adv);
     fclose(f);
@@ -627,10 +636,25 @@ static void page_audio(void)
     ImGui::SliderInt("##vol", &s_cfg.volume, 0, 100, "%d");
     help("Master volume", "Overall volume of the game.", k_now);
 
+    row("Music");
+    ImGui::SliderInt("##mus", &s_cfg.music, 0, 200, "%d");
+    help("Music", "Music volume. 70 is the original mix; above 100 boosts it.", k_now);
+
     row("Sound effects");
-    ImGui::SliderInt("##sfx", &s_cfg.sfx, 0, 100, "%d");
-    help("Sound effects", "Sound effects relative to the music. 70 matches the "
-         "original mix closely.", k_now);
+    ImGui::SliderInt("##sfx", &s_cfg.sfx, 0, 200, "%d");
+    help("Sound effects", "Sound effects, voices and everything else that isn't "
+         "music. 70 is the original mix; above 100 boosts it.", k_now);
+
+    row("Speakers");
+    {
+        static const char *sp[] = { "Stereo", "5.1 surround" };
+        int i = s_cfg.speakers;
+        if (ImGui::Combo("##spk", &i, sp, 2))
+            s_cfg.speakers = i;
+    }
+    help("Speakers", "5.1 sends sound behind you to the rear speakers. With "
+         "headphones or two speakers, Windows folds it back to stereo, but "
+         "Stereo is the better choice there.", k_next);
 }
 
 static void page_controller(void)
