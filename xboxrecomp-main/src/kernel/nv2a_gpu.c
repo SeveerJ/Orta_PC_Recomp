@@ -75,6 +75,61 @@ static const char s_hlsl_blit[] =
 "  float lB = aa_l(b);\n"
 "  return float4((lB < lMin || lB > lMax) ? a : b, 1);\n"
 "}\n"
+/* FXAA, quality version (the edge-walking FXAA 3.11 approach): finds which
+ * way an edge runs, walks along it up to 12 steps each side to find its
+ * ends, and shifts the sample across the edge by how far this pixel is from
+ * the nearer end; plus a sub-pixel blend for thin details. Smoother than the
+ * fast version on long, shallow edges, for a little more GPU time. */
+"static const float aa_q[12] = { 1, 1, 1, 1, 1, 1.5, 2, 2, 2, 2, 4, 8 };\n"
+"float aa_ls(float2 uv) { return aa_l(aa_s(uv)); }\n"
+"float4 ps_present_aa2(float4 p : SV_Position) : SV_Target {\n"
+"  float2 uv = (g_g.zw + (p.xy - g_f.xy) * g_f.zw * (1 - 2 * g_g.zw)) * g_g.xy;\n"
+"  float w, h, n;\n"
+"  S.GetDimensions(w, h, n);\n"
+"  float2 px = 1.0 / float2(w, h);\n"
+"  float3 cM = aa_s(uv);\n"
+"  float lM = aa_l(cM);\n"
+"  float lN = aa_ls(uv + float2(0, -1) * px), lS = aa_ls(uv + float2(0, 1) * px);\n"
+"  float lE = aa_ls(uv + float2(1, 0) * px),  lW = aa_ls(uv + float2(-1, 0) * px);\n"
+"  float lMax = max(max(lN, lS), max(max(lE, lW), lM));\n"
+"  float lMin = min(min(lN, lS), min(min(lE, lW), lM));\n"
+"  float range = lMax - lMin;\n"
+"  if (range < max(0.0312, lMax * 0.063)) return float4(cM, 1);\n"
+"  float lNW = aa_ls(uv + float2(-1, -1) * px), lNE = aa_ls(uv + float2(1, -1) * px);\n"
+"  float lSW = aa_ls(uv + float2(-1, 1) * px),  lSE = aa_ls(uv + float2(1, 1) * px);\n"
+"  float eH = abs(-2 * lW + lNW + lSW) + 2 * abs(-2 * lM + lN + lS) + abs(-2 * lE + lNE + lSE);\n"
+"  float eV = abs(-2 * lS + lSW + lSE) + 2 * abs(-2 * lM + lW + lE) + abs(-2 * lN + lNW + lNE);\n"
+"  bool horz = eH >= eV;\n"
+"  float avg = (2 * (lN + lS + lE + lW) + (lNW + lNE + lSW + lSE)) / 12.0;\n"
+"  float sub = smoothstep(0, 1, saturate(abs(avg - lM) / range));\n"
+"  sub = sub * sub * 0.75;\n"
+"  float l1 = horz ? lN : lW, l2 = horz ? lS : lE;\n"
+"  float g1 = abs(l1 - lM), g2 = abs(l2 - lM);\n"
+"  float stepLen = horz ? px.y : px.x;\n"
+"  float lLocal, grad;\n"
+"  if (g1 >= g2) { stepLen = -stepLen; lLocal = 0.5 * (l1 + lM); grad = g1; }\n"
+"  else { lLocal = 0.5 * (l2 + lM); grad = g2; }\n"
+"  float2 cur = uv + (horz ? float2(0, stepLen * 0.5) : float2(stepLen * 0.5, 0));\n"
+"  float2 off = horz ? float2(px.x, 0) : float2(0, px.y);\n"
+"  float2 uv1 = cur - off, uv2 = cur + off;\n"
+"  float e1 = aa_ls(uv1) - lLocal, e2 = aa_ls(uv2) - lLocal;\n"
+"  float thr = grad * 0.25;\n"
+"  bool d1 = abs(e1) >= thr, d2 = abs(e2) >= thr;\n"
+"  [unroll] for (int i = 0; i < 12; i++) {\n"
+"    if (!d1) { uv1 -= off * aa_q[i]; e1 = aa_ls(uv1) - lLocal; d1 = abs(e1) >= thr; }\n"
+"    if (!d2) { uv2 += off * aa_q[i]; e2 = aa_ls(uv2) - lLocal; d2 = abs(e2) >= thr; }\n"
+"  }\n"
+"  float dist1 = horz ? uv.x - uv1.x : uv.y - uv1.y;\n"
+"  float dist2 = horz ? uv2.x - uv.x : uv2.y - uv.y;\n"
+"  bool near1 = dist1 < dist2;\n"
+"  float dmin = min(dist1, dist2);\n"
+"  float shift = -dmin / (dist1 + dist2) + 0.5;\n"
+"  bool smaller = lM < lLocal;\n"
+"  bool ok = ((near1 ? e1 : e2) < 0.0) != smaller;\n"
+"  float fin = max(ok ? shift : 0.0, sub);\n"
+"  float2 fuv = uv + (horz ? float2(0, fin * stepLen) : float2(fin * stepLen, 0));\n"
+"  return float4(aa_s(fuv), 1);\n"
+"}\n"
 /* The NV2A video overlay (PVIDEO): movies are scaled onto the display by
  * the video unit, not drawn into the framebuffer. g_o is its rectangle on
  * the 640x480 display, g_k the colour key (w = enabled): where the key is
@@ -900,7 +955,7 @@ static struct {
      * the window's swap chain (RECOMP_GPU_PRESENT). */
     UINT k;
     ID3D11VertexShader *vs_blit;
-    ID3D11PixelShader *ps_down, *ps_up, *ps_present, *ps_overlay, *ps_present_aa;
+    ID3D11PixelShader *ps_down, *ps_up, *ps_present, *ps_overlay, *ps_present_aa, *ps_present_aa2;
     ID3D11Texture2D *ov_tex;                  /* PVIDEO overlay frame */
     ID3D11ShaderResourceView *ov_srv;
     UINT ov_w, ov_h;
@@ -1145,6 +1200,7 @@ int nv2a_gpu_prewarm_shaders(void)
         { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present", "ps_5_0" },
         { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_overlay", "ps_5_0" },
         { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present_aa", "ps_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present_aa2", "ps_5_0" },
     };
     enum { N = sizeof jobs / sizeof jobs[0] };
     HANDLE th[N];
@@ -1391,6 +1447,12 @@ static int gpu_init(void)
                                                             ID3D10Blob_GetBufferSize(b), NULL,
                                                             &G.ps_present_aa)))
                 G.ps_present_aa = NULL;
+            REL(b);
+            b = compile_src(comp, s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present_aa2", "ps_5_0");
+            if (!b || FAILED(ID3D11Device_CreatePixelShader(G.dev, ID3D10Blob_GetBufferPointer(b),
+                                                            ID3D10Blob_GetBufferSize(b), NULL,
+                                                            &G.ps_present_aa2)))
+                G.ps_present_aa2 = NULL;
             REL(b);
         }
         if (SUCCEEDED(hr)) {
@@ -3266,7 +3328,7 @@ static int present_overlay(const D3D11_VIEWPORT *vp, GSurf *s,
 void (*g_present_overlay_hook)(void *dev, void *ctx, void *rtv, unsigned w, unsigned h);
 int  (*g_present_pause_hook)(void);
 volatile long  g_present_vsync = -1;
-volatile long  g_present_aa = -1;          /* FXAA: -1 settings.ini (RECOMP_AA), 0 off, 1 on */
+volatile long  g_present_aa = -1;          /* -1 settings.ini (RECOMP_AA), 0 off, 1 FXAA, 2 FXAA high */
 volatile float g_present_crop[2] = { -1.0f, -1.0f };
 
 static void gpu_present(GSurf *s)
@@ -3337,14 +3399,16 @@ static void gpu_present(GSurf *s)
     }
     if (!present_overlay(&vp, s, f, g)) {
         static int aa = -1;
+        int lvl;
+        ID3D11PixelShader *ps = G.ps_present;
         if (aa < 0) {
             const char *e = getenv("RECOMP_AA");
-            aa = e && *e == '1';
+            aa = e ? atoi(e) : 0;
         }
-        blit(G.bb_rtv, &vp, s->srv,
-             G.ps_present_aa && (g_present_aa >= 0 ? g_present_aa : aa) ? G.ps_present_aa
-                                                                         : G.ps_present,
-             1, f, g);
+        lvl = g_present_aa >= 0 ? (int)g_present_aa : aa;
+        if (lvl >= 2 && G.ps_present_aa2) ps = G.ps_present_aa2;
+        else if (lvl >= 1 && G.ps_present_aa) ps = G.ps_present_aa;
+        blit(G.bb_rtv, &vp, s->srv, ps, 1, f, g);
     }
     if (g_present_overlay_hook) {
         ID3D11DeviceContext_OMSetRenderTargets(G.ctx, 1, &G.bb_rtv, NULL);

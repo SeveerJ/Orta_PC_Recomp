@@ -378,7 +378,7 @@ static const char *k_settings_default =
 "FrameRateCap = 60\r\n"
 "; 1 = wait for the monitor's refresh when showing a frame (no tearing, more lag).\r\n"
 "VSync = 0\r\n"
-"; 1 = smooth jagged edges (FXAA). Costs very little.\r\n"
+"; Smooth jagged edges: 0 off, 1 FXAA (fast), 2 FXAA high quality.\r\n"
 "AntiAliasing = 0\r\n"
 "\r\n"
 "[Audio]\r\n"
@@ -444,8 +444,11 @@ static void apply_setting(const char *section, const char *key, const char *val)
     } else if (!_stricmp(key, "VSync")) {
         set_default_env("RECOMP_VSYNC", atoi(val) ? "1" : "0");
     } else if (!_stricmp(key, "AntiAliasing")) {
-        /* 1 or FXAA */
-        set_default_env("RECOMP_AA", (atoi(val) || val[0] == 'F' || val[0] == 'f') ? "1" : "0");
+        /* 0, 1, 2 (or "FXAA" for 1, "High" for 2) */
+        int v = atoi(val);
+        if (val[0] == 'F' || val[0] == 'f') v = 1;
+        if (val[0] == 'H' || val[0] == 'h') v = 2;
+        set_default_env("RECOMP_AA", v >= 2 ? "2" : v == 1 ? "1" : "0");
     } else if (!_stricmp(key, "Volume")) {
         int v = atoi(val);
         if (v < 0) v = 0;

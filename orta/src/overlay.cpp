@@ -52,7 +52,7 @@ typedef struct {
     int fullscreen;
     int winh;           /* window height when not fullscreen */
     int vsync;
-    int aa;             /* FXAA */
+    int aa;             /* 0 off, 1 FXAA, 2 FXAA high */
     int fps_cap;
     int volume;         /* 0..100, master */
     int music;          /* 0..200, 70 = the original mix */
@@ -94,7 +94,7 @@ static void cfg_load(void)
     s_cfg.fullscreen = xbox_FramebufferIsFullscreen();
     s_cfg.winh       = clampi(env_int("RECOMP_WINDOW_HEIGHT", 720), 240, 4320);
     s_cfg.vsync      = env_int("RECOMP_VSYNC", 0) != 0;
-    s_cfg.aa         = env_int("RECOMP_AA", 0) != 0;
+    s_cfg.aa         = clampi(env_int("RECOMP_AA", 0), 0, 2);
     s_cfg.fps_cap    = env_int("RECOMP_FPS_CAP", 60);
     s_cfg.volume     = clampi(env_pct("RECOMP_APU_GAIN", 50), 0, 100);
     s_cfg.music      = clampi(env_pct("RECOMP_APU_MUSIC", 70), 0, 200);
@@ -195,7 +195,7 @@ static void cfg_save(void)
         "FrameRateCap = %d\r\n"
         "; 1 = wait for the monitor's refresh when showing a frame (no tearing, more lag).\r\n"
         "VSync = %d\r\n"
-        "; 1 = smooth jagged edges (FXAA). Costs very little.\r\n"
+        "; Smooth jagged edges: 0 off, 1 FXAA (fast), 2 FXAA high quality.\r\n"
         "AntiAliasing = %d\r\n"
         "\r\n"
         "[Audio]\r\n"
@@ -614,10 +614,16 @@ static void page_display(void)
     help("VSync", "Wait for the monitor's refresh before showing each frame. "
          "Removes tearing but adds a little input lag.", k_now);
 
-    row("Anti-aliasing (FXAA)");
-    toggle("##aa", &s_cfg.aa);
-    help("Anti-aliasing", "Smooths jagged edges. Costs very little, so it suits "
-         "slower PCs; fine detail gets slightly softer.", k_now);
+    row("Anti-aliasing");
+    {
+        static const char *aa[] = { "Off", "FXAA (fast)", "FXAA (high quality)" };
+        int i = s_cfg.aa;
+        if (ImGui::Combo("##aa", &i, aa, 3))
+            s_cfg.aa = i;
+    }
+    help("Anti-aliasing", "Smooths jagged edges. Fast costs very little; high "
+         "quality smooths long edges better for a little more GPU time. For the "
+         "smoothest picture, also raise the render resolution.", k_now);
 
     row("Frame rate cap");
     {

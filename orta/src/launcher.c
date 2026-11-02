@@ -248,10 +248,17 @@ static void build(void)
                  210, y, 280, 28, ID_VSYNC);
     SendMessageW(s_vsync, BM_SETCHECK, ini_int("Display", "VSync", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 34;
-    s_aa = mk(WC_BUTTONW, L"Anti-aliasing (smooth jagged edges)", BS_AUTOCHECKBOX | WS_TABSTOP,
-              210, y, 280, 28, ID_AA);
-    SendMessageW(s_aa, BM_SETCHECK, ini_int("Display", "AntiAliasing", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
-    y += 42;
+    y += 2;
+    label(L"Anti-aliasing", y);
+    s_aa = mk(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, 210, y + 2, 270, 200, ID_AA);
+    SendMessageW(s_aa, CB_ADDSTRING, 0, (LPARAM)L"Off");
+    SendMessageW(s_aa, CB_ADDSTRING, 0, (LPARAM)L"FXAA (fast)");
+    SendMessageW(s_aa, CB_ADDSTRING, 0, (LPARAM)L"FXAA (high quality)");
+    {
+        int v = ini_int("Display", "AntiAliasing", 0);
+        SendMessageW(s_aa, CB_SETCURSEL, v < 0 ? 0 : v > 2 ? 2 : v, 0);
+    }
+    y += 44;
 
     s_vol = slider(L"Volume", y, ID_VOL, 100, ini_int("Audio", "Volume", 50), &s_voltxt);
     y += 38;
@@ -298,7 +305,7 @@ static void save(void)
     ini_put("Display", "WindowHeight", k_winh[SendMessageW(s_winh, CB_GETCURSEL, 0, 0)]);
     ini_put("Display", "Widescreen", SendMessageW(s_wide, BM_GETCHECK, 0, 0) == BST_CHECKED);
     ini_put("Display", "VSync", SendMessageW(s_vsync, BM_GETCHECK, 0, 0) == BST_CHECKED);
-    ini_put("Display", "AntiAliasing", SendMessageW(s_aa, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    ini_put("Display", "AntiAliasing", (int)SendMessageW(s_aa, CB_GETCURSEL, 0, 0));
     ini_put("Audio", "Volume", (int)SendMessageW(s_vol, TBM_GETPOS, 0, 0));
     ini_put("Audio", "MusicVolume", (int)SendMessageW(s_mus, TBM_GETPOS, 0, 0));
     ini_put("Audio", "SfxVolume", (int)SendMessageW(s_sfx, TBM_GETPOS, 0, 0));
