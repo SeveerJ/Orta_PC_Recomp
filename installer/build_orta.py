@@ -293,7 +293,7 @@ def assemble(exe_built, out):
     os.makedirs(out, exist_ok=True)
     exe = os.path.join(out, "Panzer Dragoon Orta.exe")
     shutil.copyfile(exe_built, exe)
-    for f in ("engine.ini", "settings.ini", "README.txt"):
+    for f in ("engine.ini", "settings.ini", "README.txt", "spec_shaders.txt"):
         src = os.path.join(ORTA, "package", f)
         if f == "settings.ini" and os.path.isfile(os.path.join(out, f)):
             continue                      # reinstalling: keep the player's settings

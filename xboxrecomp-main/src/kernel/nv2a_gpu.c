@@ -932,6 +932,7 @@ static struct {
     int ts_state[4];                      /* 0 idle, 1 open, 2 waiting for results */
     double ts_ms;
     uint32_t ts_n;
+    LONGLONG t_present;                   /* inside Present: waiting on the GPU */
 
     GSurf surf[GPU_MAX_SURF];
     GZbuf zb[GPU_MAX_ZBUF];
@@ -1143,8 +1144,21 @@ static void cache_store(const char *path, uint64_t hash, ID3DBlob *b)
     if (!ok || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) DeleteFileA(tmp);
 }
 
+/* D3DCompile's optimisation level for compile_src: level 3 (the default
+ * here) for the shaders compiled once at start-up; the specialised combiner
+ * shaders use level 1 (see spec_worker). */
+#define COMPILE_O3 (1u << 15)
+#define COMPILE_O1 0u
+static ID3DBlob *compile_src_ex(PfnCompile fn, const char *src, size_t len,
+                                const char *entry, const char *target, unsigned opt);
 static ID3DBlob *compile_src(PfnCompile fn, const char *src, size_t len,
                              const char *entry, const char *target)
+{
+    return compile_src_ex(fn, src, len, entry, target, COMPILE_O3);
+}
+
+static ID3DBlob *compile_src_ex(PfnCompile fn, const char *src, size_t len,
+                                const char *entry, const char *target, unsigned opt)
 {
     ID3DBlob *code = NULL, *err = NULL;
     char path[MAX_PATH + 32];
@@ -1156,7 +1170,7 @@ static ID3DBlob *compile_src(PfnCompile fn, const char *src, size_t len,
         if (code) return code;
     }
     hr = fn(src, len, "nv2a_gpu.hlsl", NULL, NULL,
-                    entry, target, (1u << 15) /* OPTIMIZATION_LEVEL3 */, 0,
+                    entry, target, opt, 0,
                     &code, &err);
     if (FAILED(hr)) {
         fprintf(stderr, "  [GPU11] %s failed to compile (0x%08lX):\n%s\n", entry,
@@ -1189,6 +1203,110 @@ static DWORD WINAPI prewarm_one(LPVOID arg)
     ID3DBlob *b = compile_src(s_prewarm_comp, j->src, j->len, j->entry, j->target);
     REL(b);
     return 0;
+}
+
+/* A specialised combiner shader's source: its 36 key words as constants in
+ * front of the general shader. Shared by the builder threads and prewarm, so
+ * both produce the same text -- and so the same disk-cache entry. */
+#define SPEC_SRC_CAP (sizeof s_hlsl + 2048)
+static int spec_source(const uint32_t *key, char *src)
+{
+    int n, i;
+    n = snprintf(src, SPEC_SRC_CAP,
+                 "#define SPEC 1\n#define MODEX %uu\n#define RCX %uu\n#define RCY %uu\n"
+                 "#define RCZ %uu\n#define RCW %uu\n#define RC_LOOP [unroll]\n"
+                 "#define CW(s) k_cw[s]\nstatic const uint4 k_cw[8] = {\n",
+                 key[0], key[1], key[2], key[3], key[4]);
+    for (i = 0; i < 8; i++)
+        n += snprintf(src + n, SPEC_SRC_CAP - n, "  uint4(%uu, %uu, %uu, %uu)%s\n",
+                      key[5 + i * 4], key[6 + i * 4], key[7 + i * 4],
+                      key[8 + i * 4], i < 7 ? "," : "");
+    n += snprintf(src + n, SPEC_SRC_CAP - n, "};\n");
+    memcpy(src + n, s_hlsl, sizeof s_hlsl - 1);
+    return n + (int)(sizeof s_hlsl - 1);
+}
+
+/* Prewarm also builds every specialised shader listed in spec_shaders.txt
+ * next to the exe (one key per line, 36 hex words) -- the ones a full
+ * playthrough asked for, so a new player's first run has them from the
+ * start instead of drawing with the slow general shader while a builder
+ * works through them. Spread over the cores. */
+static volatile LONG s_pw_next;
+static int s_pw_n;
+static uint32_t (*s_pw_keys)[36];
+
+static DWORD WINAPI prewarm_spec(LPVOID arg)
+{
+    char *src = (char *)malloc(SPEC_SRC_CAP);
+    (void)arg;
+    if (!src)
+        return 0;
+    for (;;) {
+        LONG i = InterlockedIncrement(&s_pw_next) - 1;
+        ID3DBlob *b;
+        if (i >= s_pw_n)
+            break;
+        b = compile_src_ex(s_prewarm_comp, src, (size_t)spec_source(s_pw_keys[i], src),
+                           "ps_main", "ps_5_0", COMPILE_O1);
+        REL(b);
+    }
+    free(src);
+    return 0;
+}
+
+static void prewarm_spec_all(void)
+{
+    char path[MAX_PATH], line[512], *slash;
+    FILE *f;
+    int cap = 0, w, nw;
+    HANDLE th[16];
+    SYSTEM_INFO si;
+    DWORD k = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (!k || k >= MAX_PATH - 20)
+        return;
+    slash = strrchr(path, '\\');
+    if (!slash)
+        return;
+    strcpy(slash + 1, "spec_shaders.txt");
+    f = fopen(path, "r");
+    if (!f)
+        return;
+    while (fgets(line, sizeof line, f)) {
+        uint32_t key[36];
+        char *p = line, *end;
+        int j;
+        for (j = 0; j < 36; j++) {
+            key[j] = (uint32_t)strtoul(p, &end, 16);
+            if (end == p)
+                break;
+            p = end;
+        }
+        if (j != 36)
+            continue;
+        if (s_pw_n == cap) {
+            void *nk = realloc(s_pw_keys, sizeof *s_pw_keys * (size_t)(cap = cap ? cap * 2 : 256));
+            if (!nk)
+                break;
+            s_pw_keys = (uint32_t (*)[36])nk;
+        }
+        memcpy(s_pw_keys[s_pw_n++], key, sizeof key);
+    }
+    fclose(f);
+    GetSystemInfo(&si);
+    nw = (int)si.dwNumberOfProcessors;
+    if (nw > 16) nw = 16;
+    if (nw < 1) nw = 1;
+    for (w = 0, k = 0; w < nw; w++) {
+        th[k] = CreateThread(NULL, 0, prewarm_spec, NULL, 0, NULL);
+        if (th[k]) k++;
+    }
+    if (!k)
+        prewarm_spec(NULL);
+    for (w = 0; w < (int)k; w++) {
+        WaitForSingleObject(th[w], INFINITE);
+        CloseHandle(th[w]);
+    }
+    fprintf(stderr, "[PREWARM] %d specialised shader(s) from spec_shaders.txt\n", s_pw_n);
 }
 
 int nv2a_gpu_prewarm_shaders(void)
@@ -1225,6 +1343,7 @@ int nv2a_gpu_prewarm_shaders(void)
         WaitForSingleObject(th[i], INFINITE);
         CloseHandle(th[i]);
     }
+    prewarm_spec_all();
     return 1;
 }
 
@@ -2679,29 +2798,29 @@ void recomp_name_thread(const char *name);   /* recomp_prof.c */
 static DWORD WINAPI spec_worker(LPVOID arg)
 {
     recomp_name_thread("shader builder");
-    static char src[sizeof s_hlsl + 2048];
+    /* One buffer per worker: there are several of them now. */
+    char *src = (char *)malloc(SPEC_SRC_CAP);
     (void)arg;
+    if (!src)
+        return 0;
+    /* Below the game's threads: these only make draws cheaper later. */
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     for (;;) {
         PsSpec *e;
-        int n, k, i;
+        int n, k;
         ID3DBlob *b;
         WaitForSingleObject(s_spec_sem, INFINITE);
-        k = s_spec_q[s_spec_qt % PS_SPEC_MAX];
-        InterlockedIncrement(&s_spec_qt);
+        k = s_spec_q[(InterlockedIncrement(&s_spec_qt) - 1) % PS_SPEC_MAX];
         e = &s_spec[k];
-        n = snprintf(src, sizeof src,
-                     "#define SPEC 1\n#define MODEX %uu\n#define RCX %uu\n#define RCY %uu\n"
-                     "#define RCZ %uu\n#define RCW %uu\n#define RC_LOOP [unroll]\n"
-                     "#define CW(s) k_cw[s]\nstatic const uint4 k_cw[8] = {\n",
-                     e->key[0], e->key[1], e->key[2], e->key[3], e->key[4]);
-        for (i = 0; i < 8; i++)
-            n += snprintf(src + n, sizeof src - n, "  uint4(%uu, %uu, %uu, %uu)%s\n",
-                          e->key[5 + i * 4], e->key[6 + i * 4], e->key[7 + i * 4],
-                          e->key[8 + i * 4], i < 7 ? "," : "");
-        n += snprintf(src + n, sizeof src - n, "};\n");
-        memcpy(src + n, s_hlsl, sizeof s_hlsl - 1);
-        n += (int)(sizeof s_hlsl - 1);
-        b = compile_src(s_spec_comp, src, (size_t)n, "ps_main", "ps_5_0");
+        n = spec_source(e->key, src);
+        /* Optimisation level 1, not 3. Level 3 on the fully unrolled
+         * combiner took many seconds per shader on a laptop CPU (a T495's
+         * one builder thread sat at 100% all session and had 31 ready after
+         * four minutes), and every draw waiting on one ran the general
+         * shader, which is what was slow on its GPU. Level 1 compiles several
+         * times faster and the unrolled code is still far cheaper than the
+         * general shader. */
+        b = compile_src_ex(s_spec_comp, src, (size_t)n, "ps_main", "ps_5_0", COMPILE_O1);
         if (b && SUCCEEDED(ID3D11Device_CreatePixelShader(G.dev, ID3D10Blob_GetBufferPointer(b),
                                                          ID3D10Blob_GetBufferSize(b), NULL,
                                                          &e->ps))) {
@@ -2713,6 +2832,30 @@ static DWORD WINAPI spec_worker(LPVOID arg)
         REL(b);
     }
     return 0;
+}
+
+/* Every combiner setup the game asks for, appended to spec_keys.txt in the
+ * shader cache folder: gathered from a full playthrough, it becomes the
+ * spec_shaders.txt list Setup builds in advance (see prewarm_spec_all). */
+static void spec_record(const uint32_t *key)
+{
+    static FILE *f;
+    static int tried;
+    int i;
+    if (!f) {
+        char path[MAX_PATH + 32];
+        if (tried || !cache_ready())
+            return;
+        tried = 1;
+        snprintf(path, sizeof path, "%s\\spec_keys.txt", s_cache_dir);
+        f = fopen(path, "a");
+        if (!f)
+            return;
+    }
+    for (i = 0; i < 36; i++)
+        fprintf(f, i ? " %X" : "%X", key[i]);
+    fputc('\n', f);
+    fflush(f);
 }
 
 /* The shader for this draw: its specialised one if ready, else the general. */
@@ -2728,7 +2871,18 @@ static ID3D11PixelShader *ps_for(const GpuCB *cb)
             if (!s_spec_sem)
                 s_spec_on = 0;
             else
-                CloseHandle(CreateThread(NULL, 0, spec_worker, NULL, 0, NULL));
+            {
+                /* Several builders: a game's first minutes ask for dozens of
+                 * these at once. Up to three, leaving cores for the game. */
+                SYSTEM_INFO si;
+                int nw, w;
+                GetSystemInfo(&si);
+                nw = (int)si.dwNumberOfProcessors / 2 - 1;
+                if (nw < 1) nw = 1;
+                if (nw > 3) nw = 3;
+                for (w = 0; w < nw; w++)
+                    CloseHandle(CreateThread(NULL, 0, spec_worker, NULL, 0, NULL));
+            }
         }
     }
     if (!s_spec_on || cb->mode[0] != 2)
@@ -2757,6 +2911,7 @@ static ID3D11PixelShader *ps_for(const GpuCB *cb)
             memcpy(e->key, key, sizeof key);
             e->hash = h;
             e->state = 1;
+            spec_record(key);
             s_spec_q[s_spec_qh % PS_SPEC_MAX] = slot;
             InterlockedIncrement(&s_spec_qh);
             ReleaseSemaphore(s_spec_sem, 1, NULL);
@@ -3440,7 +3595,11 @@ static void gpu_present(GSurf *s)
             const char *e = getenv("RECOMP_VSYNC");
             vs = e && *e == '1';
         }
+        LARGE_INTEGER p0, p1;
+        QueryPerformanceCounter(&p0);
         IDXGISwapChain_Present(G.swap, (UINT)(g_present_vsync >= 0 ? g_present_vsync : vs), 0);
+        QueryPerformanceCounter(&p1);
+        G.t_present += p1.QuadPart - p0.QuadPart;
     }
     xbox_FramebufferGpuPresented();
 }
@@ -3545,11 +3704,13 @@ void nv2a_gpu_flip(uint32_t present_base)
             ms = 1000.0 / (double)f.QuadPart / 300.0;
             fprintf(stderr, "  [GPU11]   per frame: %.1f ms flip write-back, %.1f ms texture"
                             " checks/uploads, %.1f ms visibility waits, %.1f ms draw calls;"
-                            " GPU busy %.1f ms\n",
+                            " %.1f ms waiting for the GPU to show a frame, %.1f ms GPU frame span\n",
                     (double)G.t_flip * ms, (double)G.t_tex * ms, (double)G.t_zpass * ms,
-                    (double)G.t_draw * ms, G.ts_n ? G.ts_ms / G.ts_n : 0.0);
+                    (double)G.t_draw * ms, (double)G.t_present * ms,
+                    G.ts_n ? G.ts_ms / G.ts_n : 0.0);
             G.ts_ms = 0.0;
             G.ts_n = 0;
+            G.t_present = 0;
             G.t_flip = G.t_tex = G.t_zpass = G.t_draw = 0;
         }
         fflush(stderr);
