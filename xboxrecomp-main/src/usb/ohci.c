@@ -998,6 +998,7 @@ static void ohci_reset(OhciController *hc, uint32_t base, int index)
  */
 static DWORD WINAPI ohci_thread(LPVOID unused)
 {
+    recomp_name_thread("usb");
     /* This thread calls recompiled code, so it needs what any thread running
      * recompiled code needs: its own TIB. The guest register set is already
      * thread-local and the ISR gets a worker stack, but fs:[0] is the SEH

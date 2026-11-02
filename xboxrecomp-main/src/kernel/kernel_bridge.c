@@ -565,6 +565,7 @@ void guest_cpu_part(void);
 
 static DWORD WINAPI bridge_thread_main(LPVOID param)
 {
+    recomp_name_thread("game worker");
     struct bridge_thread_start *s = (struct bridge_thread_start *)param;
     recomp_func_t fn = s->fn;
     uint32_t ctx1 = s->ctx1, ctx2 = s->ctx2;
@@ -3137,6 +3138,7 @@ static int g_timer_started;
 
 static DWORD WINAPI kernel_timer_thread(LPVOID unused)
 {
+    recomp_name_thread("timer");
     int slot = xbox_worker_stack_alloc();
 
     (void)unused;

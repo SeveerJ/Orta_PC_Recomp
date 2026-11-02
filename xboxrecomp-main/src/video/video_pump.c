@@ -55,8 +55,10 @@ static HWND vp_create_window(void)
                            NULL, NULL, GetModuleHandleA(NULL), NULL);
 }
 
+void recomp_name_thread(const char *name);   /* recomp_prof.c */
 static DWORD WINAPI vp_thread(LPVOID unused)
 {
+    recomp_name_thread("video");
     IDirect3D8 *d3d;
     IDirect3DDevice8 *dev = NULL;
     D3DPRESENT_PARAMETERS pp;

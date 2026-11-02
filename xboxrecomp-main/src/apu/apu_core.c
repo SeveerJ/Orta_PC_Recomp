@@ -789,8 +789,10 @@ static void se_frame(MCPXAPUState *d)
  * APU frame thread (background processing)
  * ============================================================ */
 
+void recomp_name_thread(const char *name);   /* recomp_prof.c */
 static void *mcpx_apu_frame_thread(void *arg)
 {
+    recomp_name_thread("sound");
     MCPXAPUState *d = MCPX_APU_DEVICE(arg);
     qemu_mutex_lock(&d->lock);
 

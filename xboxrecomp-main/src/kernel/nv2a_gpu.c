@@ -926,6 +926,12 @@ static struct {
     ID3D11Buffer *vb_prog, *ib_prog, *cb_vp, *cb_vc;
     int query_active, query_pending;
     uint32_t zpass_acc;
+    /* GPU time per frame: a disjoint query and begin/end timestamps per
+     * frame, four frames in flight, read without waiting. */
+    ID3D11Query *ts_dis[4], *ts_beg[4], *ts_end[4];
+    int ts_state[4];                      /* 0 idle, 1 open, 2 waiting for results */
+    double ts_ms;
+    uint32_t ts_n;
 
     GSurf surf[GPU_MAX_SURF];
     GZbuf zb[GPU_MAX_ZBUF];
@@ -1396,10 +1402,21 @@ static int gpu_init(void)
     }
     {
         D3D11_QUERY_DESC qd;
+        int k;
         qd.Query = D3D11_QUERY_OCCLUSION;
         qd.MiscFlags = 0;
         if (FAILED(ID3D11Device_CreateQuery(G.dev, &qd, &G.query)))
             G.query = NULL;
+        for (k = 0; k < 4; k++) {
+            qd.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+            if (FAILED(ID3D11Device_CreateQuery(G.dev, &qd, &G.ts_dis[k])))
+                G.ts_dis[k] = NULL;
+            qd.Query = D3D11_QUERY_TIMESTAMP;
+            if (FAILED(ID3D11Device_CreateQuery(G.dev, &qd, &G.ts_beg[k])))
+                G.ts_beg[k] = NULL;
+            if (FAILED(ID3D11Device_CreateQuery(G.dev, &qd, &G.ts_end[k])))
+                G.ts_end[k] = NULL;
+        }
     }
     G.verts = (Nv2aGpuVert *)malloc(sizeof(Nv2aGpuVert) * GPU_VB_VERTS);
     if (!G.verts)
@@ -2658,8 +2675,10 @@ static HANDLE s_spec_sem;
 static volatile LONG s_spec_q[PS_SPEC_MAX], s_spec_qh, s_spec_qt;
 static volatile LONG s_spec_ready, s_spec_used;
 
+void recomp_name_thread(const char *name);   /* recomp_prof.c */
 static DWORD WINAPI spec_worker(LPVOID arg)
 {
+    recomp_name_thread("shader builder");
     static char src[sizeof s_hlsl + 2048];
     (void)arg;
     for (;;) {
@@ -3426,6 +3445,46 @@ static void gpu_present(GSurf *s)
     xbox_FramebufferGpuPresented();
 }
 
+/* Close this frame's GPU timing, collect finished ones, open the next. The
+ * span runs from the previous flip to this one, so it includes any time the
+ * GPU sat idle waiting for work: near the frame time means the GPU (or the
+ * CPU feeding it) is the limit; well under it means the GPU has room. */
+static void gpu_timing_flip(void)
+{
+    int k = (int)(G.frame & 3), j;
+    if (!G.ts_dis[k] || !G.ts_beg[k] || !G.ts_end[k])
+        return;
+    if (G.ts_state[k] == 1) {
+        ID3D11DeviceContext_End(G.ctx, (ID3D11Asynchronous *)G.ts_end[k]);
+        ID3D11DeviceContext_End(G.ctx, (ID3D11Asynchronous *)G.ts_dis[k]);
+        G.ts_state[k] = 2;
+    }
+    for (j = 0; j < 4; j++) {
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj;
+        UINT64 b, e;
+        if (G.ts_state[j] != 2)
+            continue;
+        if (ID3D11DeviceContext_GetData(G.ctx, (ID3D11Asynchronous *)G.ts_dis[j], &dj, sizeof dj,
+                                        D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK
+            || ID3D11DeviceContext_GetData(G.ctx, (ID3D11Asynchronous *)G.ts_beg[j], &b, sizeof b,
+                                           D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK
+            || ID3D11DeviceContext_GetData(G.ctx, (ID3D11Asynchronous *)G.ts_end[j], &e, sizeof e,
+                                           D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
+            continue;
+        G.ts_state[j] = 0;
+        if (!dj.Disjoint && dj.Frequency && e > b) {
+            G.ts_ms += (double)(e - b) * 1000.0 / (double)dj.Frequency;
+            G.ts_n++;
+        }
+    }
+    k = (int)((G.frame + 1) & 3);
+    if (G.ts_state[k] == 0) {
+        ID3D11DeviceContext_Begin(G.ctx, (ID3D11Asynchronous *)G.ts_dis[k]);
+        ID3D11DeviceContext_End(G.ctx, (ID3D11Asynchronous *)G.ts_beg[k]);
+        G.ts_state[k] = 1;
+    }
+}
+
 void nv2a_gpu_flip(uint32_t present_base)
 {
     int i;
@@ -3434,6 +3493,7 @@ void nv2a_gpu_flip(uint32_t present_base)
         return;
     forget_pending();
     flush();
+    gpu_timing_flip();
     /* Only the frame being shown. Everything else stays on the GPU until
      * something reads it: a texture fetch or a dump syncs it then. */
     QueryPerformanceCounter(&t0);
@@ -3484,9 +3544,12 @@ void nv2a_gpu_flip(uint32_t present_base)
             QueryPerformanceFrequency(&f);
             ms = 1000.0 / (double)f.QuadPart / 300.0;
             fprintf(stderr, "  [GPU11]   per frame: %.1f ms flip write-back, %.1f ms texture"
-                            " checks/uploads, %.1f ms visibility waits, %.1f ms draw calls\n",
+                            " checks/uploads, %.1f ms visibility waits, %.1f ms draw calls;"
+                            " GPU busy %.1f ms\n",
                     (double)G.t_flip * ms, (double)G.t_tex * ms, (double)G.t_zpass * ms,
-                    (double)G.t_draw * ms);
+                    (double)G.t_draw * ms, G.ts_n ? G.ts_ms / G.ts_n : 0.0);
+            G.ts_ms = 0.0;
+            G.ts_n = 0;
             G.t_flip = G.t_tex = G.t_zpass = G.t_draw = 0;
         }
         fflush(stderr);

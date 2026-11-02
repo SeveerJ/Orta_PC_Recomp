@@ -768,6 +768,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 3: Initialize Xbox kernel */
     printf("Initializing Xbox kernel replacement...\n");
     xbox_kernel_init();
+    {
+        extern void recomp_name_thread(const char *name);
+        recomp_name_thread("game");
+    }
 
     /* Step 4: Set game directory for file I/O path translation */
     {

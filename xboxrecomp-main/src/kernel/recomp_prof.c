@@ -657,6 +657,131 @@ static void stderr_buffer_init(void)
         CloseHandle(CreateThread(NULL, 0, stderr_flusher, NULL, 0, NULL));
 }
 
+/* ── [PERF]: who uses the CPU, always on ─────────────────────────────────
+ * Every 10 s: the cores the whole game used, and its busiest threads by
+ * name. Cheap (one thread snapshot per 10 s), so it runs in normal play and
+ * a player's session log says whether a slow PC is short of CPU (and on which
+ * thread) or of GPU (see the [GPU11] "GPU busy" line). RECOMP_PERF_LOG=0
+ * turns it off. Threads name themselves with recomp_name_thread(). */
+#define PERF_NAMES 64
+static volatile LONG s_nnames;
+static DWORD s_name_tid[PERF_NAMES];
+static char s_name_str[PERF_NAMES][24];
+
+void recomp_name_thread(const char *name)
+{
+    LONG i = InterlockedIncrement(&s_nnames) - 1;
+    if (i >= PERF_NAMES)
+        return;
+    strncpy(s_name_str[i], name, sizeof s_name_str[i] - 1);
+    s_name_tid[i] = GetCurrentThreadId();
+}
+
+static const char *perf_name(DWORD tid)
+{
+    LONG i, n = s_nnames < PERF_NAMES ? s_nnames : PERF_NAMES;
+    if (tid && tid == g_nv2a_exec_tid)
+        return "graphics";
+    for (i = n - 1; i >= 0; i--)
+        if (s_name_tid[i] == tid)
+            return s_name_str[i];
+    return NULL;
+}
+
+typedef struct { DWORD tid; ULONGLONG t; } PerfT;
+
+static DWORD WINAPI perf_main(LPVOID unused)
+{
+    static PerfT prev[256], cur[256];
+    int nprev = 0;
+    ULONGLONG last = GetTickCount64();
+    SYSTEM_INFO si;
+    (void)unused;
+    GetSystemInfo(&si);
+    for (;;) {
+        HANDLE snap;
+        THREADENTRY32 te;
+        int ncur = 0, i, j;
+        ULONGLONG now;
+        double secs, total = 0;
+        struct { double share; DWORD tid; } top[6];
+        int ntop = 0;
+        Sleep(10000);
+        snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snap == INVALID_HANDLE_VALUE)
+            continue;
+        te.dwSize = sizeof te;
+        for (BOOL ok = Thread32First(snap, &te); ok && ncur < 256; ok = Thread32Next(snap, &te)) {
+            HANDLE h;
+            FILETIME c, x, k, u;
+            if (te.th32OwnerProcessID != GetCurrentProcessId())
+                continue;
+            h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+            if (!h)
+                continue;
+            if (GetThreadTimes(h, &c, &x, &k, &u)) {
+                cur[ncur].tid = te.th32ThreadID;
+                cur[ncur].t = (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime)
+                            + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
+                ncur++;
+            }
+            CloseHandle(h);
+        }
+        CloseHandle(snap);
+        now = GetTickCount64();
+        secs = (double)(now - last) / 1000.0;
+        last = now;
+        for (i = 0; i < ncur && nprev; i++) {
+            double share;
+            for (j = 0; j < nprev && prev[j].tid != cur[i].tid; j++)
+                ;
+            if (j == nprev || cur[i].t < prev[j].t)
+                continue;
+            share = (double)(cur[i].t - prev[j].t) / 1e7 / secs;
+            total += share;
+            {   /* keep the six busiest */
+                int at = ntop < 6 ? ntop++ : 5;
+                if (at == 5 && ntop == 6 && share <= top[5].share)
+                    continue;
+                top[at].share = share;
+                top[at].tid = cur[i].tid;
+                while (at > 0 && top[at].share > top[at - 1].share) {
+                    double s = top[at].share; DWORD t = top[at].tid;
+                    top[at] = top[at - 1];
+                    top[at - 1].share = s; top[at - 1].tid = t;
+                    at--;
+                }
+            }
+        }
+        if (nprev) {
+            fprintf(stderr, "[PERF] CPU: %.2f of %lu cores over %.0f s; busiest:", total,
+                    (unsigned long)si.dwNumberOfProcessors, secs);
+            for (i = 0; i < ntop; i++) {
+                const char *n = perf_name(top[i].tid);
+                if (n)
+                    fprintf(stderr, " %s %.0f%%", n, top[i].share * 100.0);
+                else
+                    fprintf(stderr, " thread %lu %.0f%%", (unsigned long)top[i].tid,
+                            top[i].share * 100.0);
+            }
+            fprintf(stderr, " (100%% = one core)\n");
+        }
+        memcpy(prev, cur, sizeof(PerfT) * (size_t)ncur);
+        nprev = ncur;
+    }
+    return 0;
+}
+
+static void perf_start(void)
+{
+    static int done;
+    const char *e = getenv("RECOMP_PERF_LOG");
+    if (done || (e && *e == '0'))
+        return;
+    done = 1;
+    CloseHandle(CreateThread(NULL, 0, perf_main, NULL, 0, NULL));
+}
+
 void recomp_prof_start(void)
 {
     static int started;
@@ -664,6 +789,7 @@ void recomp_prof_start(void)
     HMODULE m;
     IMAGE_NT_HEADERS *nt;
     stderr_buffer_init();
+    perf_start();
     if (started || !e || !*e || !strcmp(e, "0"))
         return;
     started = 1;
@@ -679,6 +805,7 @@ void recomp_prof_start(void)
     fprintf(stderr, "[PROF] sampling profiler on (exe base %p)\n", (void *)m);
 }
 #else
+void recomp_name_thread(const char *name) { (void)name; }
 void recomp_prof_start(void) {}
 void recomp_watch_dump(void) {}
 #endif

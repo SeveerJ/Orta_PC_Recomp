@@ -417,8 +417,10 @@ int xbox_FramebufferDumpBmp(const char *path)
     return 0;
 }
 
+void recomp_name_thread(const char *name);   /* recomp_prof.c */
 static DWORD WINAPI fb_thread(LPVOID unused)
 {
+    recomp_name_thread("window");
     HWND hwnd;
     HDC hdc;
     BITMAPINFO bi;
