@@ -669,9 +669,9 @@ static void page_audio(void)
         if (ImGui::Combo("##spk", &i, sp, 2))
             s_cfg.speakers = i;
     }
-    help("Speakers", "5.1 sends sound behind you to the rear speakers. With "
-         "headphones or two speakers, Windows folds it back to stereo, but "
-         "Stereo is the better choice there.", k_next);
+    help("Speakers", "5.1 lets the game place sounds across six speakers, as an "
+         "Xbox set to Dolby Digital does. With headphones or two speakers, "
+         "choose Stereo.", k_next);
 }
 
 static void page_controller(void)

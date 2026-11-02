@@ -164,11 +164,11 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
         /* Stereo PCM matches the two-channel host output. 1 means mono;
          * advertising AC3 requires an encoded-output path.
          *
-         * Experimental: RECOMP_AUDIO_AC3=1 says Dolby Digital is on (AC3 flag
-         * 0x00010000), so a title pans its sound across 5.1 speakers itself.
-         * The GP/EP DSPs that mix and encode for that mode are stubs here, so
-         * a title may hang or lose sounds; RECOMP_AUDIO_FLAGS=<hex> sets the
-         * word outright for experiments. */
+         * RECOMP_AUDIO_AC3=1 says Dolby Digital is on (AC3 flag 0x00010000),
+         * so a title pans its sound across 5.1 speakers itself; the six
+         * speaker mixbins are taken before the (stubbed) encoder. Orta runs
+         * normally this way. RECOMP_AUDIO_FLAGS=<hex> sets the word outright
+         * for experiments. */
         if (ValueLength >= sizeof(ULONG)) {
             const char *ac3 = getenv("RECOMP_AUDIO_AC3");
             const char *raw = getenv("RECOMP_AUDIO_FLAGS");

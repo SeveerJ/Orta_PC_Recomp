@@ -64,9 +64,9 @@ Download `OrtaPC_Setup.exe` from the Releases page and run it.
 - **Anti-aliasing:** Off, FXAA (fast) or FXAA (high quality), in the launcher
   and the F1 menu (`AntiAliasing = 0/1/2` in `[Display]`).
 - **Audio:** separate Music and Sound effects levels, 0-200 (70 is the
-  original mix, above 100 boosts). Speakers can be Stereo or 5.1; 5.1 takes
-  effect when the game next starts. An experimental switch that tells the game
-  it is on a Dolby Digital console: `RECOMP_AUDIO_AC3 = 1` under `[Advanced]`.
+  original mix, above 100 boosts). Speakers can be Stereo or 5.1; 5.1 tells the game it is on a
+  Dolby Digital Xbox, so it places sounds across the six speakers itself (takes
+  effect when the game next starts).
 - **Data folder** next to the game: the game's cache (`Data\Cache`), the
   compiled graphics shaders (`Data\shader_cache`) and the console's save
   areas. Deleting `Cache` and `shader_cache` gives the game a fresh start;

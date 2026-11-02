@@ -466,6 +466,13 @@ static void apply_setting(const char *section, const char *key, const char *val)
         int six = val[0] == '5' || val[0] == '6' || val[0] == 's' || val[0] == 'S';
         if (!_stricmp(val, "Stereo")) six = 0;
         set_default_env("RECOMP_AUDIO_SPEAKERS", six ? "6" : "2");
+        /* 5.1 also tells the game it is on a Dolby Digital console, so it
+         * places sounds across the six speakers itself, as on the Xbox (its
+         * stereo mix keeps the back of the room in two crosstalk channels).
+         * Tested: it runs normally and the rear pair gets an even share.
+         * RECOMP_AUDIO_AC3 = 0 under [Advanced] turns this part off. */
+        if (six)
+            set_default_env("RECOMP_AUDIO_AC3", "1");
     } else if (!_stricmp(key, "Rumble")) {
         set_default_env("RECOMP_RUMBLE", atoi(val) ? "1" : "0");
     } else if (!_stricmp(key, "RumbleStrength")) {
