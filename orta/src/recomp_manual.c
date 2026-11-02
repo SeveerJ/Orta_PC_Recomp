@@ -51,10 +51,12 @@ extern ptrdiff_t g_xbox_mem_offset;
 extern __declspec(thread) uint32_t g_esp;
 extern __declspec(thread) uint32_t g_eax;
 extern __declspec(thread) uint32_t g_ecx;
+extern __declspec(thread) uint32_t g_esi;
 #else
 extern __thread uint32_t g_esp;
 extern __thread uint32_t g_eax;
 extern __thread uint32_t g_ecx;
+extern __thread uint32_t g_esi;
 #endif
 extern uint32_t g_xbox_code_lo, g_xbox_code_hi;
 
@@ -809,8 +811,23 @@ void sub_0030C83C(void)
  *       g_eax = result;
  *   }
  */
+/* 0x0022A579: the "never opened" exit of 0x0022A4A0, a media object's method
+ * (its [esi+0x10] is still null): mov eax, 0x800401F0; pop esi; ret 0xC.
+ * Nothing in the main game reaches it, so the function finder never found
+ * it; every Pandora's Box mission and scenario does, and without a body the
+ * dispatcher skipped it and the stack unwound into a null, then a wild call.
+ * Seeded too (seeds_manual.json); this keeps it working either way. */
+static void orta_media_not_open_exit(void)
+{
+    g_eax = 0x800401F0u;
+    g_esi = GMEM32(g_esp);         /* pop esi */
+    g_esp += 4;
+    g_esp += 4 + 0x0C;             /* ret 0xC */
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
+    if (xbox_va == 0x0022A579u) return orta_media_not_open_exit;
     /*
      * TODO: Add your overrides here. Examples:
      *
