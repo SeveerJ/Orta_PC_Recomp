@@ -2507,6 +2507,26 @@ static void gpu_state(Nv2aGpuState *st, uint32_t mode)
     st->depth_test = s_gpu.depth_test;
     st->depth_func = s_gpu.depth_func;
     st->depth_mask = s_gpu.depth_mask;
+    /* Stencil (xemu pgraph: SET_STENCIL_*). Only a Z24S8 zeta has any;
+     * RECOMP_GPU_STENCIL=0 turns it off. Orta's last boss is hidden under
+     * the water by it. */
+    {
+        static int on = -1;
+        if (on < 0) {
+            const char *e = getenv("RECOMP_GPU_STENCIL");
+            on = !(e && *e == '0');
+        }
+        if (on && s_kreg[0x032C >> 2] && st->zeta_format == 2) {
+            st->stencil_test  = 1;
+            st->stencil_wmask = s_kreg[0x0360 >> 2] & 0xFF;
+            st->stencil_func  = s_kreg[0x0364 >> 2];
+            st->stencil_ref   = s_kreg[0x0368 >> 2] & 0xFF;
+            st->stencil_rmask = s_kreg[0x036C >> 2] & 0xFF;
+            st->stencil_op[0] = s_kreg[0x0370 >> 2];
+            st->stencil_op[1] = s_kreg[0x0374 >> 2];
+            st->stencil_op[2] = s_kreg[0x0378 >> 2];
+        }
+    }
     st->alpha_test = s_gpu.alpha_test;
     st->alpha_func = s_gpu.alpha_func;
     st->alpha_ref = s_gpu.alpha_ref;
@@ -3260,6 +3280,10 @@ static void capture_draw(const Nv2aGpuState *st, const uint32_t *prog, uint32_t 
             s_kreg[0x0338 >> 2], st->alpha_test, st->alpha_func, st->alpha_ref,
             st->rc.stage_program, st->rc.control, st->rc.final0, st->rc.final1,
             st->zoff[0], st->zoff[1], st->zclip[0], st->zclip[1], st->zcull);
+    fprintf(f, "  stencil enable %u zeta %u func %X ref %02X rmask %02X wmask %02X ops %X/%X/%X colormask %08X\n",
+            s_kreg[0x032C >> 2], st->zeta_format, s_kreg[0x0364 >> 2], s_kreg[0x0368 >> 2] & 0xFF,
+            s_kreg[0x036C >> 2] & 0xFF, s_kreg[0x0360 >> 2] & 0xFF, s_kreg[0x0370 >> 2],
+            s_kreg[0x0374 >> 2], s_kreg[0x0378 >> 2], st->color_mask);
     for (i = 0; i < 4; i++)
         if (st->tex[i].valid)
             fprintf(f, "  tex%u %08X fmt %02X %ux%u filter %08X addr %u/%u\n", i, st->tex[i].offset,
@@ -4727,12 +4751,12 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
                     param, s_gpu.color_offset, s_gpu.clip_w, s_gpu.clip_h,
                     s_gpu.clear_color, 10);
         clear_surface(param);
-        if (param & 0x01) {                       /* Z */
+        if (param & 0x03) {                       /* Z, stencil */
             if (nv2a_gpu_enabled()) {
                 Nv2aGpuState st;
                 gpu_state(&st, NV2A_GPU_MODE_2D);
-                nv2a_gpu_clear(&st, 0, 0, 1, s_gpu.zstencil_clear);
-            } else {
+                nv2a_gpu_clear(&st, 0, 0, (int)(param & 0x03), s_gpu.zstencil_clear);
+            } else if (param & 0x01) {
                 zbuf_clear();
             }
         }

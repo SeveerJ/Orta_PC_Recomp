@@ -62,6 +62,11 @@ typedef struct {
     uint32_t blend_enable, blend_sfactor, blend_dfactor;
     uint32_t blend_equation, blend_color, color_mask;
     uint32_t depth_test, depth_func, depth_mask;
+    /* Stencil (all zero when the test is off): SET_STENCIL_FUNC (0x200..),
+     * its ref and read mask, the write mask, and the fail / z-fail / pass
+     * ops as the NV2A encodes them (0x1E00 keep, 0 zero, 0x1E01 replace...). */
+    uint32_t stencil_test, stencil_func, stencil_ref, stencil_rmask, stencil_wmask;
+    uint32_t stencil_op[3];
     uint32_t alpha_test, alpha_func, alpha_ref;
     uint32_t clip_plane_mode;
     uint32_t fog_enable, fog_mode;        /* for vertex programs on the GPU */
@@ -97,7 +102,8 @@ void nv2a_gpu_begin(const Nv2aGpuState *st);
 /* One triangle of the current batch. */
 void nv2a_gpu_tri(const Nv2aGpuVert *a, const Nv2aGpuVert *b, const Nv2aGpuVert *c);
 
-/* CLEAR_SURFACE: colour inside the clip rectangle, depth over the whole zeta. */
+/* CLEAR_SURFACE: colour inside the clip rectangle, depth over the whole zeta.
+ * depth is a mask: 1 clears depth, 2 clears stencil. */
 void nv2a_gpu_clear(const Nv2aGpuState *st, int color, uint32_t argb,
                     int depth, uint32_t zstencil_clear);
 

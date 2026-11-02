@@ -1946,7 +1946,8 @@ static GZbuf *zbuf_get(uint32_t zeta, uint32_t w, uint32_t h)
     memset(&td, 0, sizeof td);
     td.Width = w * G.k; td.Height = h * G.k;
     td.MipLevels = 1; td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_R32_TYPELESS;   /* depth, and readable as a shadow map */
+    /* Float depth plus 8 bits of stencil, readable as a shadow map. */
+    td.Format = DXGI_FORMAT_R32G8X24_TYPELESS;
     td.SampleDesc.Count = 1;
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
@@ -1954,10 +1955,10 @@ static GZbuf *zbuf_get(uint32_t zeta, uint32_t w, uint32_t h)
         D3D11_DEPTH_STENCIL_VIEW_DESC dd;
         D3D11_SHADER_RESOURCE_VIEW_DESC sd;
         memset(&dd, 0, sizeof dd);
-        dd.Format = DXGI_FORMAT_D32_FLOAT;
+        dd.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
         dd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
         memset(&sd, 0, sizeof sd);
-        sd.Format = DXGI_FORMAT_R32_FLOAT;
+        sd.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
         sd.Texture2DArray.MipLevels = 1;
         sd.Texture2DArray.ArraySize = 1;
@@ -1973,7 +1974,8 @@ static GZbuf *zbuf_get(uint32_t zeta, uint32_t w, uint32_t h)
     }
     z->zeta = zeta; z->w = w; z->h = h; z->used = G.frame;
     /* The software buffer starts "infinitely far": far plane here. */
-    ID3D11DeviceContext_ClearDepthStencilView(G.ctx, z->dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    ID3D11DeviceContext_ClearDepthStencilView(G.ctx, z->dsv,
+                                              D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
     return z;
 }
 
@@ -2297,6 +2299,20 @@ static ID3D11BlendState *blend_state(const Nv2aGpuState *st, int clear)
     return G.bs[G.nbs++].s;
 }
 
+static D3D11_STENCIL_OP stencil_op(uint32_t op)
+{
+    switch (op) {
+    case 0x0000: return D3D11_STENCIL_OP_ZERO;
+    case 0x1E01: return D3D11_STENCIL_OP_REPLACE;
+    case 0x1E02: return D3D11_STENCIL_OP_INCR_SAT;
+    case 0x1E03: return D3D11_STENCIL_OP_DECR_SAT;
+    case 0x150A: return D3D11_STENCIL_OP_INVERT;
+    case 0x8507: return D3D11_STENCIL_OP_INCR;
+    case 0x8508: return D3D11_STENCIL_OP_DECR;
+    default:     return D3D11_STENCIL_OP_KEEP;       /* 0x1E00 */
+    }
+}
+
 static ID3D11DepthStencilState *depth_state(const Nv2aGpuState *st, int off)
 {
     D3D11_DEPTH_STENCIL_DESC d;
@@ -2319,6 +2335,16 @@ static ID3D11DepthStencilState *depth_state(const Nv2aGpuState *st, int off)
     d.FrontFace.StencilFailOp = d.FrontFace.StencilDepthFailOp =
         d.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
     d.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
+    if (!off && st->stencil_test) {
+        d.StencilEnable = TRUE;
+        d.StencilReadMask = (UINT8)st->stencil_rmask;
+        d.StencilWriteMask = (UINT8)st->stencil_wmask;
+        d.FrontFace.StencilFunc = st->stencil_func >= 0x200 && st->stencil_func <= 0x207
+            ? (D3D11_COMPARISON_FUNC)(st->stencil_func - 0x200 + 1) : D3D11_COMPARISON_ALWAYS;
+        d.FrontFace.StencilFailOp      = stencil_op(st->stencil_op[0]);
+        d.FrontFace.StencilDepthFailOp = stencil_op(st->stencil_op[1]);
+        d.FrontFace.StencilPassOp      = stencil_op(st->stencil_op[2]);
+    }
     d.BackFace = d.FrontFace;
     for (i = 0; i < G.nds; i++)
         if (memcmp(&G.ds[i].d, &d, sizeof d) == 0)
@@ -2710,7 +2736,8 @@ static void apply(const Nv2aGpuState *st, GSurf *s, GZbuf *z,
             rn = e && *e == '1';
         }
         (void)rn;
-        ID3D11DeviceContext_OMSetDepthStencilState(G.ctx, depth_state(st, clear || nd), 0);
+        ID3D11DeviceContext_OMSetDepthStencilState(G.ctx, depth_state(st, clear || nd),
+                                                   st->stencil_test ? st->stencil_ref : 0);
     }
 }
 
@@ -2904,9 +2931,14 @@ void nv2a_gpu_clear(const Nv2aGpuState *st, int color, uint32_t argb,
         if (z) {
             float v = st->zeta_format == 1 ? (float)(zstencil_clear & 0xFFFF)
                                            : (float)(zstencil_clear >> 8);
+            UINT flags = 0;
             v *= zscale_for(st->zeta_format, st->z_float);
             if (v > 1.0f || st->z_float) v = 1.0f;   /* float clears: the far plane */
-            ID3D11DeviceContext_ClearDepthStencilView(G.ctx, z->dsv, D3D11_CLEAR_DEPTH, v, 0);
+            if (depth & 1) flags |= D3D11_CLEAR_DEPTH;
+            if ((depth & 2) && st->zeta_format == 2) flags |= D3D11_CLEAR_STENCIL;
+            if (flags)
+                ID3D11DeviceContext_ClearDepthStencilView(G.ctx, z->dsv, flags, v,
+                                                          (UINT8)(zstencil_clear & 0xFF));
         }
     }
     if (color && st->clip_w && st->clip_h) {
