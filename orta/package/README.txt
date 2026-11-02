@@ -31,6 +31,12 @@ SAVES
   back that folder up if you want to keep them. Your existing saves are
   kept when you copy this update over the old folder.
 
+CACHES
+  The Data folder next to the game holds its caches (Data\Cache and
+  Data\shader_cache). If the game misbehaves, closing it and deleting
+  those two folders gives it a fresh start; nothing you need is lost.
+  The first start after that takes a few minutes.
+
 WHAT'S NEW IN THIS BUILD
   - Enemy and boss health is now right (the game had been told it was
     running on a console from another region and used easier settings).

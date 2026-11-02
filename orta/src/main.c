@@ -520,6 +520,102 @@ static void find_game_dir(void)
     }
 }
 
+/* Where saves and caches live: a "Data" folder next to the .exe, so players
+ * can find it (the toolkit's default, %LOCALAPPDATA%\xboxrecomp, is hidden and
+ * shared by every title built with it). If the game folder can't be written
+ * to -- installed under Program Files, say -- %LOCALAPPDATA%\Orta PC instead.
+ *
+ *   Data\TitleData, Data\UserData, Data\SystemData   saves and settings
+ *   Data\Cache                                        the game's cache drive
+ *   Data\shader_cache                                 compiled graphics shaders
+ *
+ * Deleting Cache and shader_cache gives a first-start-after-install run with
+ * the saves kept; deleting Data gives a completely fresh one. */
+static char g_data_dir[MAX_PATH];
+static int g_data_copied;
+
+static int dir_writable(const char *dir)
+{
+    char probe[MAX_PATH];
+    HANDLE h;
+    CreateDirectoryA(dir, NULL);
+    snprintf(probe, sizeof probe, "%s\\.write_test", dir);
+    h = CreateFileA(probe, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    CloseHandle(h);
+    return 1;
+}
+
+/* Copy a folder tree, never overwriting: used once, to bring saves over. */
+static int copy_tree(const char *from, const char *to)
+{
+    char pat[MAX_PATH], a[MAX_PATH], b[MAX_PATH];
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    int n = 0;
+    CreateDirectoryA(to, NULL);
+    snprintf(pat, sizeof pat, "%s\\*", from);
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    do {
+        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, ".."))
+            continue;
+        snprintf(a, sizeof a, "%s\\%s", from, fd.cFileName);
+        snprintf(b, sizeof b, "%s\\%s", to, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            n += copy_tree(a, b);
+        else if (CopyFileA(a, b, TRUE))
+            n++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return n;
+}
+
+static void setup_data_dir(void)
+{
+    char exe_dir[MAX_PATH], *slash, sub[MAX_PATH], old[MAX_PATH], local[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, exe_dir, MAX_PATH);
+    DWORD ln = GetEnvironmentVariableA("LOCALAPPDATA", local, sizeof local);
+    int fresh;
+    if (!n || n >= MAX_PATH)
+        return;
+    slash = strrchr(exe_dir, '\\');
+    if (slash)
+        slash[0] = 0;
+    snprintf(g_data_dir, sizeof g_data_dir, "%s\\Data", exe_dir);
+    if (!dir_writable(g_data_dir)) {
+        if (!ln || ln >= sizeof local - 16) {
+            g_data_dir[0] = 0;          /* leave it to the toolkit default */
+            return;
+        }
+        snprintf(g_data_dir, sizeof g_data_dir, "%s\\Orta PC", local);
+        CreateDirectoryA(g_data_dir, NULL);
+    }
+
+    /* First start with this layout: bring saves (and the already-compiled
+     * shaders, so the start stays quick) over from the old location. The
+     * old copy is left alone. Cache is not copied -- it is only a cache. */
+    snprintf(sub, sizeof sub, "%s\\UserData", g_data_dir);
+    fresh = GetFileAttributesA(sub) == INVALID_FILE_ATTRIBUTES;
+    if (fresh && ln && ln < sizeof local - 16) {
+        static const char *keep[] = { "TitleData", "UserData", "SystemData", "shader_cache" };
+        int i, copied = 0;
+        for (i = 0; i < 4; i++) {
+            snprintf(old, sizeof old, "%s\\xboxrecomp\\%s", local, keep[i]);
+            snprintf(sub, sizeof sub, "%s\\%s", g_data_dir, keep[i]);
+            if (GetFileAttributesA(old) != INVALID_FILE_ATTRIBUTES)
+                copied += copy_tree(old, sub);
+        }
+        g_data_copied = copied;
+    }
+
+    snprintf(sub, sizeof sub, "%s\\shader_cache", g_data_dir);
+    SetEnvironmentVariableA("RECOMP_SHADER_CACHE_DIR", sub);
+}
+
 /* settings.ini (the player's) first, then engine.ini (a release build's
  * runtime switches, all [Advanced]); whichever sets a variable first wins. */
 static void load_settings(void)
@@ -561,6 +657,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Setup starts the freshly built exe once with --prewarm, so the virus
      * scan Windows runs on a program it has never seen happens during
      * Setup rather than on the player's first start... */
+    setup_data_dir();
+
     if (lpCmdLine && strstr(lpCmdLine, "--prewarm")) {
         /* ...and the graphics shaders are compiled into the disk cache:
          * on a first start that takes minutes before the first frame. */
@@ -658,7 +756,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 4: Set game directory for file I/O path translation */
     {
         extern void xbox_path_init(const char *game_dir, const char *save_dir);
-        xbox_path_init(g_game_dir, NULL);
+        xbox_path_init(g_game_dir, g_data_dir[0] ? g_data_dir : NULL);
+        fprintf(stderr, "[DATA] saves and caches in %s%s\n", g_data_dir[0] ? g_data_dir : "(toolkit default)",
+                g_data_copied ? " (saves copied over from the old location)" : "");
     }
 
     /* Step 5: Initialize kernel bridge (thunk table in Xbox memory) */

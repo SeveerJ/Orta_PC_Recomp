@@ -967,7 +967,7 @@ static void release(IUnknown *u)
  * while the game runs (on a worker thread, but it still competes with the
  * game for the CPU, and the general shader is slower on the GPU until they
  * are ready). The compiled bytecode does not depend on the PC, so it is kept
- * in %LOCALAPPDATA%\xboxrecomp\shader_cache, named by a hash of everything
+ * in %LOCALAPPDATA%\xboxrecomp\shader_cache (or RECOMP_SHADER_CACHE_DIR), named by a hash of everything
  * that goes into the compile. Off with RECOMP_SHADER_CACHE=0. */
 typedef HRESULT (WINAPI *PfnCreateBlob)(SIZE_T, ID3DBlob **);
 static PfnCreateBlob s_create_blob;
@@ -989,7 +989,14 @@ static int cache_ready(void)
         char base[MAX_PATH];
         DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", base, sizeof base);
         s_cache_on = 0;
-        if (!(e && *e == '0') && s_create_blob && n && n < sizeof base - 40) {
+        char want[MAX_PATH];
+        DWORD w = GetEnvironmentVariableA("RECOMP_SHADER_CACHE_DIR", want, sizeof want);
+        if (!(e && *e == '0') && s_create_blob && w && w < sizeof want) {
+            /* The host picked the folder (a title keeping its data by its exe). */
+            snprintf(s_cache_dir, sizeof s_cache_dir, "%s", want);
+            CreateDirectoryA(s_cache_dir, NULL);
+            s_cache_on = GetFileAttributesA(s_cache_dir) != INVALID_FILE_ATTRIBUTES;
+        } else if (!(e && *e == '0') && s_create_blob && n && n < sizeof base - 40) {
             snprintf(s_cache_dir, sizeof s_cache_dir, "%s\\xboxrecomp", base);
             CreateDirectoryA(s_cache_dir, NULL);
             snprintf(s_cache_dir, sizeof s_cache_dir, "%s\\xboxrecomp\\shader_cache", base);
