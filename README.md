@@ -8,7 +8,9 @@ Built on [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) by sp00nznet
 (MIT, with xemu-derived parts under LGPL-2.1). Many GPU behaviours are matched
 against [xemu](https://xemu.app).
 
-> **Status:** work in progress. Every episode is playable from start to finish.
+> **Status:** work in progress. The game is once again playable from start to
+> finish on Windows, every episode through to the last boss, and the Pandora's
+> Box extras now run too.
 > See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## You need your own copy of the game
@@ -59,6 +61,8 @@ Download `OrtaPC_Setup.exe` from the Releases page and run it.
   music, sound effects and speakers.
 - **F1 menu** (or Back + Start on the pad) while playing: the same settings
   and more. Everything is saved to `settings.ini` next to the game.
+- **Anti-aliasing:** Off, FXAA (fast) or FXAA (high quality), in the launcher
+  and the F1 menu (`AntiAliasing = 0/1/2` in `[Display]`).
 - **Audio:** separate Music and Sound effects levels, 0-200 (70 is the
   original mix, above 100 boosts). Speakers can be Stereo or 5.1; 5.1 takes
   effect when the game next starts. An experimental switch that tells the game
@@ -71,7 +75,9 @@ Download `OrtaPC_Setup.exe` from the Releases page and run it.
   `%LOCALAPPDATA%\Orta PC` instead.)
 - **Problem reports:** each run writes `session_log.txt` next to the game,
   and the run before is kept as `session_log_previous.txt`. Send these with
-  any report.
+  any report. Every 10 seconds the log also notes how much CPU the game used
+  and on which threads (`[PERF]` lines), which helps with "it runs slowly"
+  reports.
 
 To make the installer yourself: `installer/build_setup.sh` builds the
 `Setup.exe` stub (clang + lld-link, no C runtime), and

@@ -10,9 +10,12 @@
 - **Short hitches when an episode or boss loads** new files, worst on a hard
   disk: the game reads and caches its files one at a time. A fix (reading ahead
   and a pre-filled cache) is in progress.
-- **Pandora's Box** extras crash the game; they were never tested.
+- **Pandora's Box:** the missions, scenarios, encyclopedia and box game now
+  run; not every sub-episode has been played through yet.
 - **Slow on low-end PCs:** about 20 fps on a ThinkPad T495 at the original
-  480 resolution. Being looked into.
+  480 resolution. The cause is known (graphics shaders that take too long to
+  build on a slow CPU, leaving a weak GPU on the slow general shader); a fix is
+  being tested.
 - **5.1:** sound from behind reaches the rear-left speaker a little and the
   rear-right not at all, and nothing goes to the LFE. The Dolby Digital switch
   is untested.

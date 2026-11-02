@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+### Fixes
+- **Last boss** now disappears under the water as it should: the Xbox's
+  stencil masking is emulated (it was ignored before).
+- **Pandora's Box** missions and scenarios no longer crash on start (a piece of
+  the game's sound code was never translated).
+
+### New
+- **Anti-aliasing:** Off / FXAA (fast) / FXAA (high quality), in the launcher,
+  the F1 menu and settings.ini.
+- **Performance report** in `session_log.txt`: CPU use per thread every 10 s,
+  and per-frame graphics timings, to help diagnose slow PCs.
+
 ## 0.6.0
 
 ### Installing
