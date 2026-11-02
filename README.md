@@ -46,9 +46,32 @@ Download `OrtaPC_Setup.exe` from the Releases page and run it.
   (about 300 MB) into `%LOCALAPPDATA%\Orta PC Setup`, translates and compiles
   the game (20-30 minutes), installs it where you chose, and then deletes that
   work folder.
+- At the end it prepares the graphics shaders the game needs to start (a few
+  minutes), so the first start is quick.
 - The install folder gets `setup_log.txt`; send it along with any problem
   report. If Setup stops part-way, run it again: it reuses what it already
   downloaded and compiled.
+
+## Settings and files
+
+- **Launcher:** shown the first time the game starts (and whenever Shift is
+  held while it starts): resolution, display mode, widescreen, VSync, volume,
+  music, sound effects and speakers.
+- **F1 menu** (or Back + Start on the pad) while playing: the same settings
+  and more. Everything is saved to `settings.ini` next to the game.
+- **Audio:** separate Music and Sound effects levels, 0-200 (70 is the
+  original mix, above 100 boosts). Speakers can be Stereo or 5.1; 5.1 takes
+  effect when the game next starts. An experimental switch that tells the game
+  it is on a Dolby Digital console: `RECOMP_AUDIO_AC3 = 1` under `[Advanced]`.
+- **Data folder** next to the game: the game's cache (`Data\Cache`), the
+  compiled graphics shaders (`Data\shader_cache`) and the console's save
+  areas. Deleting `Cache` and `shader_cache` gives the game a fresh start;
+  the first start after that is slow again. Episode saves are in
+  `game_files\UDATA`. (If the game folder can't be written to, Data goes in
+  `%LOCALAPPDATA%\Orta PC` instead.)
+- **Problem reports:** each run writes `session_log.txt` next to the game,
+  and the run before is kept as `session_log_previous.txt`. Send these with
+  any report.
 
 To make the installer yourself: `installer/build_setup.sh` builds the
 `Setup.exe` stub (clang + lld-link, no C runtime), and

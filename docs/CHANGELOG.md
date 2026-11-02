@@ -1,6 +1,35 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+### Installing
+- **One-file installer** (`OrtaPC_Setup`): finds your disc image, checks it,
+  downloads its tools, builds and installs the game. Works on Steam
+  Deck/Proton.
+- **Quick first start:** Setup prepares the graphics shaders, so the first
+  start no longer takes minutes.
+
+### New
+- **Launcher** before the game starts: resolution (labelled with real sizes,
+  480 by default), display mode, widescreen, VSync, volume, music, sound
+  effects and speakers.
+- **Separate music and sound-effect volumes,** 0-200, in the launcher and the
+  F1 menu. Master volume no longer crackles when turned up.
+- **5.1 output** (Speakers = 5.1), plus an experimental Dolby Digital switch.
+- **Data folder** next to the game for the cache and compiled shaders,
+  replacing the hidden `%LOCALAPPDATA%\xboxrecomp`. Existing saves and
+  shaders are copied over on the first start.
+- **Session logs** (`session_log.txt`, `session_log_previous.txt`) next to the
+  game, so crashes and hangs leave a report.
+
+### Fixes
+- **Freeze after the first boss** (picture froze, sound carried on).
+- **Voices too fast:** proper resampling for sound played at other rates.
+- **Much lower CPU use** (title screen from about 2.6 cores to 0.4): polling
+  loops and idle waits now sleep instead of spinning.
+- **Loading:** game files use Windows' file cache.
+
+## Earlier
 
 ### Graphics
 - **Water (Episode 2 river):** the reflection now matches xemu. This adds
