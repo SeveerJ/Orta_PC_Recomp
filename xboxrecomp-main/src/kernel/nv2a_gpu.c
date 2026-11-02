@@ -49,6 +49,32 @@ static const char s_hlsl_blit[] =
 "  float2 uv = (g_g.zw + (p.xy - g_f.xy) * g_f.zw * (1 - 2 * g_g.zw)) * g_g.xy;\n"
 "  return float4(S.SampleLevel(L, float3(uv, 0), 0).rgb, 1);\n"
 "}\n"
+/* The same, through FXAA (Lottes' compact version), working in the game
+ * image's own pixels before it is scaled to the window: luma edges are
+ * found from the four diagonal neighbours and blurred along their length. */
+"float3 aa_s(float2 uv) { return S.SampleLevel(L, float3(uv, 0), 0).rgb; }\n"
+"float aa_l(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }\n"
+"float4 ps_present_aa(float4 p : SV_Position) : SV_Target {\n"
+"  float2 uv = (g_g.zw + (p.xy - g_f.xy) * g_f.zw * (1 - 2 * g_g.zw)) * g_g.xy;\n"
+"  float w, h, n;\n"
+"  S.GetDimensions(w, h, n);\n"
+"  float2 px = 1.0 / float2(w, h);\n"
+"  float3 cM = aa_s(uv);\n"
+"  float lNW = aa_l(aa_s(uv + float2(-1, -1) * px)), lNE = aa_l(aa_s(uv + float2(1, -1) * px));\n"
+"  float lSW = aa_l(aa_s(uv + float2(-1, 1) * px)),  lSE = aa_l(aa_s(uv + float2(1, 1) * px));\n"
+"  float lM = aa_l(cM);\n"
+"  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n"
+"  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n"
+"  if (lMax - lMin < max(0.0312, lMax * 0.125)) return float4(cM, 1);\n"
+"  float2 dir = float2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));\n"
+"  float red = max((lNW + lNE + lSW + lSE) * (0.25 / 8.0), 1.0 / 128.0);\n"
+"  float rdm = 1.0 / (min(abs(dir.x), abs(dir.y)) + red);\n"
+"  dir = clamp(dir * rdm, -8.0, 8.0) * px;\n"
+"  float3 a = 0.5 * (aa_s(uv + dir * (1.0 / 3.0 - 0.5)) + aa_s(uv + dir * (2.0 / 3.0 - 0.5)));\n"
+"  float3 b = a * 0.5 + 0.25 * (aa_s(uv - dir * 0.5) + aa_s(uv + dir * 0.5));\n"
+"  float lB = aa_l(b);\n"
+"  return float4((lB < lMin || lB > lMax) ? a : b, 1);\n"
+"}\n"
 /* The NV2A video overlay (PVIDEO): movies are scaled onto the display by
  * the video unit, not drawn into the framebuffer. g_o is its rectangle on
  * the 640x480 display, g_k the colour key (w = enabled): where the key is
@@ -874,7 +900,7 @@ static struct {
      * the window's swap chain (RECOMP_GPU_PRESENT). */
     UINT k;
     ID3D11VertexShader *vs_blit;
-    ID3D11PixelShader *ps_down, *ps_up, *ps_present, *ps_overlay;
+    ID3D11PixelShader *ps_down, *ps_up, *ps_present, *ps_overlay, *ps_present_aa;
     ID3D11Texture2D *ov_tex;                  /* PVIDEO overlay frame */
     ID3D11ShaderResourceView *ov_srv;
     UINT ov_w, ov_h;
@@ -1118,6 +1144,7 @@ int nv2a_gpu_prewarm_shaders(void)
         { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_up",      "ps_5_0" },
         { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present", "ps_5_0" },
         { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_overlay", "ps_5_0" },
+        { s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present_aa", "ps_5_0" },
     };
     enum { N = sizeof jobs / sizeof jobs[0] };
     HANDLE th[N];
@@ -1355,6 +1382,15 @@ static int gpu_init(void)
             hr = b ? ID3D11Device_CreatePixelShader(G.dev, ID3D10Blob_GetBufferPointer(b),
                                                     ID3D10Blob_GetBufferSize(b), NULL, &G.ps_present)
                    : E_FAIL;
+            REL(b);
+        }
+        if (SUCCEEDED(hr)) {
+            /* Optional: without it, anti-aliasing just stays off. */
+            b = compile_src(comp, s_hlsl_blit, sizeof s_hlsl_blit - 1, "ps_present_aa", "ps_5_0");
+            if (!b || FAILED(ID3D11Device_CreatePixelShader(G.dev, ID3D10Blob_GetBufferPointer(b),
+                                                            ID3D10Blob_GetBufferSize(b), NULL,
+                                                            &G.ps_present_aa)))
+                G.ps_present_aa = NULL;
             REL(b);
         }
         if (SUCCEEDED(hr)) {
@@ -3230,6 +3266,7 @@ static int present_overlay(const D3D11_VIEWPORT *vp, GSurf *s,
 void (*g_present_overlay_hook)(void *dev, void *ctx, void *rtv, unsigned w, unsigned h);
 int  (*g_present_pause_hook)(void);
 volatile long  g_present_vsync = -1;
+volatile long  g_present_aa = -1;          /* FXAA: -1 settings.ini (RECOMP_AA), 0 off, 1 on */
 volatile float g_present_crop[2] = { -1.0f, -1.0f };
 
 static void gpu_present(GSurf *s)
@@ -3298,8 +3335,17 @@ static void gpu_present(GSurf *s)
         g[2] = g_present_crop[0] >= 0.0f ? g_present_crop[0] : cx;
         g[3] = g_present_crop[1] >= 0.0f ? g_present_crop[1] : cy;
     }
-    if (!present_overlay(&vp, s, f, g))
-        blit(G.bb_rtv, &vp, s->srv, G.ps_present, 1, f, g);
+    if (!present_overlay(&vp, s, f, g)) {
+        static int aa = -1;
+        if (aa < 0) {
+            const char *e = getenv("RECOMP_AA");
+            aa = e && *e == '1';
+        }
+        blit(G.bb_rtv, &vp, s->srv,
+             G.ps_present_aa && (g_present_aa >= 0 ? g_present_aa : aa) ? G.ps_present_aa
+                                                                         : G.ps_present,
+             1, f, g);
+    }
     if (g_present_overlay_hook) {
         ID3D11DeviceContext_OMSetRenderTargets(G.ctx, 1, &G.bb_rtv, NULL);
         g_present_overlay_hook(G.dev, G.ctx, G.bb_rtv, cw, ch);

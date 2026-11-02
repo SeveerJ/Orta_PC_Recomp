@@ -30,6 +30,7 @@ extern "C" {
 extern void (*g_present_overlay_hook)(void *dev, void *ctx, void *rtv, unsigned w, unsigned h);
 extern int  (*g_present_pause_hook)(void);
 extern volatile long  g_present_vsync;        /* -1: settings.ini */
+extern volatile long  g_present_aa;           /* -1: settings.ini */
 extern volatile float g_present_crop[2];      /* -1: settings.ini */
 extern int  (*g_wndproc_hook)(HWND, UINT, WPARAM, LPARAM);
 extern int  xbox_FramebufferIsFullscreen(void);
@@ -51,6 +52,7 @@ typedef struct {
     int fullscreen;
     int winh;           /* window height when not fullscreen */
     int vsync;
+    int aa;             /* FXAA */
     int fps_cap;
     int volume;         /* 0..100, master */
     int music;          /* 0..200, 70 = the original mix */
@@ -92,6 +94,7 @@ static void cfg_load(void)
     s_cfg.fullscreen = xbox_FramebufferIsFullscreen();
     s_cfg.winh       = clampi(env_int("RECOMP_WINDOW_HEIGHT", 720), 240, 4320);
     s_cfg.vsync      = env_int("RECOMP_VSYNC", 0) != 0;
+    s_cfg.aa         = env_int("RECOMP_AA", 0) != 0;
     s_cfg.fps_cap    = env_int("RECOMP_FPS_CAP", 60);
     s_cfg.volume     = clampi(env_pct("RECOMP_APU_GAIN", 50), 0, 100);
     s_cfg.music      = clampi(env_pct("RECOMP_APU_MUSIC", 70), 0, 200);
@@ -108,6 +111,7 @@ static void cfg_load(void)
 static void cfg_apply_live(void)
 {
     g_present_vsync = s_cfg.vsync;
+    g_present_aa = s_cfg.aa;
     g_present_crop[0] = (float)s_cfg.cropx / 100.0f;
     g_present_crop[1] = (float)s_cfg.cropy / 100.0f;
     g_apu_gain_master = (float)s_cfg.volume / 50.0f;      /* 50 = unity */
@@ -191,6 +195,8 @@ static void cfg_save(void)
         "FrameRateCap = %d\r\n"
         "; 1 = wait for the monitor's refresh when showing a frame (no tearing, more lag).\r\n"
         "VSync = %d\r\n"
+        "; 1 = smooth jagged edges (FXAA). Costs very little.\r\n"
+        "AntiAliasing = %d\r\n"
         "\r\n"
         "[Audio]\r\n"
         "; Master volume, 0 to 100.\r\n"
@@ -212,7 +218,7 @@ static void cfg_save(void)
         ";   Shift while starting the game shows it once.\r\n"
         "ShowOnStart = %d\r\n",
         orta_res_value(s_cfg.res), s_cfg.widescreen, s_cfg.cropx, s_cfg.cropy,
-        s_cfg.fullscreen, s_cfg.winh, s_cfg.fps_cap, s_cfg.vsync,
+        s_cfg.fullscreen, s_cfg.winh, s_cfg.fps_cap, s_cfg.vsync, s_cfg.aa,
         s_cfg.volume, s_cfg.music, s_cfg.sfx, s_cfg.speakers ? "5.1" : "Stereo", s_cfg.rumble, s_cfg.rumble_str, launcher_show);
     if (adv)
         fprintf(f, "\r\n%s", adv);
@@ -607,6 +613,11 @@ static void page_display(void)
     toggle("##vs", &s_cfg.vsync);
     help("VSync", "Wait for the monitor's refresh before showing each frame. "
          "Removes tearing but adds a little input lag.", k_now);
+
+    row("Anti-aliasing (FXAA)");
+    toggle("##aa", &s_cfg.aa);
+    help("Anti-aliasing", "Smooths jagged edges. Costs very little, so it suits "
+         "slower PCs; fine detail gets slightly softer.", k_now);
 
     row("Frame rate cap");
     {

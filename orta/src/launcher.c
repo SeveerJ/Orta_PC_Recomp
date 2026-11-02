@@ -22,7 +22,7 @@
 extern int recomp_diag_quiet(void);
 
 enum {
-    ID_RES = 100, ID_MODE, ID_WINH, ID_WIDE, ID_VSYNC, ID_VOL, ID_VOLTXT,
+    ID_RES = 100, ID_MODE, ID_WINH, ID_WIDE, ID_VSYNC, ID_AA, ID_VOL, ID_VOLTXT,
     ID_MUS, ID_MUSTXT, ID_SFX, ID_SFXTXT, ID_SPK,
     ID_SHOW, ID_PLAY, ID_QUIT, ID_TIMER = 1
 };
@@ -106,7 +106,7 @@ void orta_res_label(int i, int wide, char *out, int cap)
 
 static const char *s_ini;
 static HWND s_wnd, s_res, s_mode, s_winh, s_wide, s_vsync, s_vol, s_voltxt, s_show;
-static HWND s_mus, s_mustxt, s_sfx, s_sfxtxt, s_spk;
+static HWND s_mus, s_mustxt, s_sfx, s_sfxtxt, s_spk, s_aa;
 static HFONT s_font, s_title_font;
 static int s_dpi = 96, s_result, s_bottom = 500;
 static int s_screen_w, s_screen_h;
@@ -247,6 +247,10 @@ static void build(void)
     s_vsync = mk(WC_BUTTONW, L"VSync (no tearing, a little more lag)", BS_AUTOCHECKBOX | WS_TABSTOP,
                  210, y, 280, 28, ID_VSYNC);
     SendMessageW(s_vsync, BM_SETCHECK, ini_int("Display", "VSync", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
+    y += 34;
+    s_aa = mk(WC_BUTTONW, L"Anti-aliasing (smooth jagged edges)", BS_AUTOCHECKBOX | WS_TABSTOP,
+              210, y, 280, 28, ID_AA);
+    SendMessageW(s_aa, BM_SETCHECK, ini_int("Display", "AntiAliasing", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 42;
 
     s_vol = slider(L"Volume", y, ID_VOL, 100, ini_int("Audio", "Volume", 50), &s_voltxt);
@@ -294,6 +298,7 @@ static void save(void)
     ini_put("Display", "WindowHeight", k_winh[SendMessageW(s_winh, CB_GETCURSEL, 0, 0)]);
     ini_put("Display", "Widescreen", SendMessageW(s_wide, BM_GETCHECK, 0, 0) == BST_CHECKED);
     ini_put("Display", "VSync", SendMessageW(s_vsync, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    ini_put("Display", "AntiAliasing", SendMessageW(s_aa, BM_GETCHECK, 0, 0) == BST_CHECKED);
     ini_put("Audio", "Volume", (int)SendMessageW(s_vol, TBM_GETPOS, 0, 0));
     ini_put("Audio", "MusicVolume", (int)SendMessageW(s_mus, TBM_GETPOS, 0, 0));
     ini_put("Audio", "SfxVolume", (int)SendMessageW(s_sfx, TBM_GETPOS, 0, 0));
