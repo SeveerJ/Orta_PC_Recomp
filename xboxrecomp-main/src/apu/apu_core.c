@@ -366,7 +366,8 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
      * a six-channel voice can't be made. */
     {
         const char *sp = getenv("RECOMP_AUDIO_SPEAKERS");
-        if (sp && atoi(sp) == 6) {
+        const char *ac3 = getenv("RECOMP_AUDIO_AC3");
+        if ((sp && atoi(sp) == 6) || (ac3 && *ac3 == '1')) {
             int dev = xa2_init_channels(6);
             if (dev) {
                 g_apu_out_channels = 6;

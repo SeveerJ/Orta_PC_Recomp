@@ -23,6 +23,7 @@ extern int recomp_diag_quiet(void);
 
 enum {
     ID_RES = 100, ID_MODE, ID_WINH, ID_WIDE, ID_VSYNC, ID_VOL, ID_VOLTXT,
+    ID_MUS, ID_MUSTXT, ID_SFX, ID_SFXTXT, ID_SPK,
     ID_SHOW, ID_PLAY, ID_QUIT, ID_TIMER = 1
 };
 
@@ -105,8 +106,9 @@ void orta_res_label(int i, int wide, char *out, int cap)
 
 static const char *s_ini;
 static HWND s_wnd, s_res, s_mode, s_winh, s_wide, s_vsync, s_vol, s_voltxt, s_show;
+static HWND s_mus, s_mustxt, s_sfx, s_sfxtxt, s_spk;
 static HFONT s_font, s_title_font;
-static int s_dpi = 96, s_result;
+static int s_dpi = 96, s_result, s_bottom = 500;
 static int s_screen_w, s_screen_h;
 
 static int S(int v) { return MulDiv(v, s_dpi, 96); }
@@ -148,9 +150,28 @@ static void label(const wchar_t *text, int y)
 
 static void update_volume_text(void)
 {
+    static HWND *const bars[] = { &s_vol, &s_mus, &s_sfx };
+    static HWND *const txts[] = { &s_voltxt, &s_mustxt, &s_sfxtxt };
     wchar_t b[16];
-    swprintf(b, 16, L"%d", (int)SendMessageW(s_vol, TBM_GETPOS, 0, 0));
-    SetWindowTextW(s_voltxt, b);
+    int i;
+    for (i = 0; i < 3; i++) {
+        if (!*bars[i]) continue;
+        swprintf(b, 16, L"%d", (int)SendMessageW(*bars[i], TBM_GETPOS, 0, 0));
+        SetWindowTextW(*txts[i], b);
+    }
+}
+
+/* A slider row: label, trackbar 0..max, and the number beside it. */
+static HWND slider(const wchar_t *text, int y, int id, int max, int pos, HWND *txt)
+{
+    HWND t;
+    label(text, y);
+    t = mk(TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP, 204, y, 236, 30, id);
+    SendMessageW(t, TBM_SETRANGE, TRUE, MAKELPARAM(0, max));
+    SendMessageW(t, TBM_SETPAGESIZE, 0, 10);
+    SendMessageW(t, TBM_SETPOS, TRUE, pos);
+    *txt = mk(L"STATIC", L"", SS_CENTERIMAGE, 446, y, 40, 30, id + 1);
+    return t;
 }
 
 static void update_enabled(void)
@@ -228,14 +249,26 @@ static void build(void)
     SendMessageW(s_vsync, BM_SETCHECK, ini_int("Display", "VSync", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 42;
 
-    label(L"Volume", y);
-    s_vol = mk(TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP, 204, y, 236, 30, ID_VOL);
-    SendMessageW(s_vol, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-    SendMessageW(s_vol, TBM_SETPAGESIZE, 0, 10);
-    SendMessageW(s_vol, TBM_SETPOS, TRUE, ini_int("Audio", "Volume", 50));
-    s_voltxt = mk(L"STATIC", L"", SS_CENTERIMAGE, 446, y, 40, 30, ID_VOLTXT);
+    s_vol = slider(L"Volume", y, ID_VOL, 100, ini_int("Audio", "Volume", 50), &s_voltxt);
+    y += 38;
+    s_mus = slider(L"Music", y, ID_MUS, 200, ini_int("Audio", "MusicVolume", 70), &s_mustxt);
+    y += 38;
+    s_sfx = slider(L"Sound effects", y, ID_SFX, 200, ini_int("Audio", "SfxVolume", 70), &s_sfxtxt);
     update_volume_text();
-    y += 48;
+    y += 40;
+    label(L"Speakers", y);
+    s_spk = mk(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, 210, y + 2, 270, 200, ID_SPK);
+    SendMessageW(s_spk, CB_ADDSTRING, 0, (LPARAM)L"Stereo (speakers or headphones)");
+    SendMessageW(s_spk, CB_ADDSTRING, 0, (LPARAM)L"5.1 surround");
+    {
+        char v[16];
+        GetPrivateProfileStringA("Audio", "Speakers", "Stereo", v, sizeof v, s_ini);
+        SendMessageW(s_spk, CB_SETCURSEL, (v[0] == '5' || v[0] == '6' ||
+                                           !_strnicmp(v, "surround", 8)) ? 1 : 0, 0);
+    }
+    mk(L"STATIC", L"Music and effects: 70 is the original mix, above 100 boosts.",
+       0, 24, y + 36, 460, 22, 0);
+    y += 70;
 
     s_show = mk(WC_BUTTONW, L"Show this window every time the game starts",
                 BS_AUTOCHECKBOX | WS_TABSTOP, 24, y, 460, 28, ID_SHOW);
@@ -248,6 +281,7 @@ static void build(void)
 
     mk(WC_BUTTONW, L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP, 264, y, 104, 36, ID_PLAY);
     mk(WC_BUTTONW, L"Quit", WS_TABSTOP, 380, y, 104, 36, ID_QUIT);
+    s_bottom = y + 56;
     fill_sizes();
     update_enabled();
 }
@@ -261,6 +295,10 @@ static void save(void)
     ini_put("Display", "Widescreen", SendMessageW(s_wide, BM_GETCHECK, 0, 0) == BST_CHECKED);
     ini_put("Display", "VSync", SendMessageW(s_vsync, BM_GETCHECK, 0, 0) == BST_CHECKED);
     ini_put("Audio", "Volume", (int)SendMessageW(s_vol, TBM_GETPOS, 0, 0));
+    ini_put("Audio", "MusicVolume", (int)SendMessageW(s_mus, TBM_GETPOS, 0, 0));
+    ini_put("Audio", "SfxVolume", (int)SendMessageW(s_sfx, TBM_GETPOS, 0, 0));
+    WritePrivateProfileStringA("Audio", "Speakers",
+                               SendMessageW(s_spk, CB_GETCURSEL, 0, 0) == 1 ? "5.1" : "Stereo", s_ini);
     ini_put("Launcher", "ShowOnStart", SendMessageW(s_show, BM_GETCHECK, 0, 0) == BST_CHECKED);
 }
 
@@ -292,7 +330,8 @@ static void nudge(HWND c, int dir)
         }
     } else if (!lstrcmpiW(cls, TRACKBAR_CLASSW)) {
         int p = (int)SendMessageW(c, TBM_GETPOS, 0, 0) + dir * 5;
-        SendMessageW(c, TBM_SETPOS, TRUE, p < 0 ? 0 : p > 100 ? 100 : p);
+        int max = (int)SendMessageW(c, TBM_GETRANGEMAX, 0, 0);
+        SendMessageW(c, TBM_SETPOS, TRUE, p < 0 ? 0 : p > max ? max : p);
         update_volume_text();
     } else if (!lstrcmpiW(cls, WC_BUTTONW) && (GetWindowLongW(c, GWL_STYLE) & 0xF) == BS_AUTOCHECKBOX) {
         SendMessageW(c, BM_CLICK, 0, 0);
@@ -351,7 +390,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
         }
         break;
     case WM_HSCROLL:
-        if ((HWND)l == s_vol) update_volume_text();
+        if ((HWND)l == s_vol || (HWND)l == s_mus || (HWND)l == s_sfx) update_volume_text();
         return 0;
     case WM_TIMER:
         poll_pad();
@@ -453,7 +492,7 @@ int launcher_maybe_run(const char *ini_path)
     s_title_font = CreateFontIndirectW(&ncm.lfMessageFont);
 
     build();
-    r.left = 0; r.top = 0; r.right = S(508); r.bottom = S(500);
+    r.left = 0; r.top = 0; r.right = S(508); r.bottom = S(s_bottom);
     AdjustWindowRectEx(&r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
     {   /* centre on the screen */
         int w = r.right - r.left, hgt = r.bottom - r.top;

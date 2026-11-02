@@ -162,9 +162,24 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
 
     case XC_AUDIO:
         /* Stereo PCM matches the two-channel host output. 1 means mono;
-         * advertising AC3 requires an encoded-output path. */
+         * advertising AC3 requires an encoded-output path.
+         *
+         * Experimental: RECOMP_AUDIO_AC3=1 says Dolby Digital is on (AC3 flag
+         * 0x00010000), so a title pans its sound across 5.1 speakers itself.
+         * The GP/EP DSPs that mix and encode for that mode are stubs here, so
+         * a title may hang or lose sounds; RECOMP_AUDIO_FLAGS=<hex> sets the
+         * word outright for experiments. */
         if (ValueLength >= sizeof(ULONG)) {
-            *(PULONG)Value = 0x00000000;
+            const char *ac3 = getenv("RECOMP_AUDIO_AC3");
+            const char *raw = getenv("RECOMP_AUDIO_FLAGS");
+            ULONG flags = (ac3 && *ac3 == '1') ? 0x00010000u : 0u;
+            static int told;
+            if (raw && *raw)
+                flags = (ULONG)strtoul(raw, NULL, 16);
+            if (!told++ && flags)
+                fprintf(stderr, "[AUDIO] told the game its audio setting is 0x%08lX%s\n",
+                        (unsigned long)flags, (flags & 0x00010000u) ? " (Dolby Digital 5.1)" : "");
+            *(PULONG)Value = flags;
             if (Type) *Type = 4; /* REG_DWORD */
             if (ResultLength) *ResultLength = sizeof(ULONG);
         }

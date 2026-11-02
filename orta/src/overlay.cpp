@@ -96,7 +96,7 @@ static void cfg_load(void)
     s_cfg.volume     = clampi(env_pct("RECOMP_APU_GAIN", 50), 0, 100);
     s_cfg.music      = clampi(env_pct("RECOMP_APU_MUSIC", 70), 0, 200);
     s_cfg.sfx        = clampi(env_pct("RECOMP_APU_SFX", 70), 0, 200);
-    s_cfg.speakers   = env_int("RECOMP_AUDIO_SPEAKERS", 2) == 6;
+    s_cfg.speakers   = env_int("RECOMP_AUDIO_SPEAKERS", 2) == 6 || env_int("RECOMP_AUDIO_AC3", 0) == 1;
     s_cfg.cropx      = clampi(env_int("RECOMP_CROP_X", 0), 0, 20);
     s_cfg.cropy      = clampi(env_int("RECOMP_CROP_Y", 0), 0, 20);
     s_cfg.rumble     = env_int("RECOMP_RUMBLE", 1) != 0;
