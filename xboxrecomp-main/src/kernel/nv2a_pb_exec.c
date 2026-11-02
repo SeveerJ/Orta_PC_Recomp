@@ -4831,6 +4831,8 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             extern double g_pb_draw_seconds;
             static double last_draw, last_cap, last_tex;
             static uint32_t last_up;
+            static LONG64 last_io;
+            static LONG last_fl, last_fls;
             double tex;
             uint32_t up;
             nv2a_gpu_hitch_counters(&tex, &up);
@@ -4855,9 +4857,13 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
                         double busy = (g_pb_draw_seconds - last_draw) * 1000.0
                                     - (g_cap_wait_ms - last_cap);
                         fprintf(stderr, "[HITCH] frame %u took %.1f ms: executor busy %.1f ms"
-                                " (textures %.1f ms, %u uploads), idle %.1f ms%c",
+                                " (textures %.1f ms, %u uploads), idle %.1f ms;"
+                                " file calls %.1f ms, %ld flush(es), %ld cache flush(es) skipped%c",
                                 s_gpu.flips, ms, busy, tex - last_tex, up - last_up,
-                                ms - busy - (g_cap_wait_ms - last_cap), 10);
+                                ms - busy - (g_cap_wait_ms - last_cap),
+                                (double)(g_file_io_us - last_io) / 1000.0,
+                                (long)(g_file_flushes - last_fl),
+                                (long)(g_file_flushes_skipped - last_fls), 10);
                     }
                 }
             }
@@ -4866,6 +4872,9 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             last_cap = g_cap_wait_ms;
             last_tex = tex;
             last_up = up;
+            last_io = g_file_io_us;
+            last_fl = g_file_flushes;
+            last_fls = g_file_flushes_skipped;
         }
         frame_trace_flip();
         return;

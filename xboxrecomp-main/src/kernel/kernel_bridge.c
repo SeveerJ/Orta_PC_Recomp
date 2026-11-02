@@ -9639,6 +9639,30 @@ static int stdcall_args_for_ordinal(ULONG ordinal)
     }
 }
 
+/* Time spent in the file calls, for the hitch report: a late frame that
+ * lines up with the game copying disc files to its cache shows up as
+ * file time (nv2a_pb_exec.c prints it beside each [HITCH]). Summed across
+ * threads, in microseconds. */
+volatile LONG64 g_file_io_us;
+static LONG64 s_qpf;
+#define TIMED_BRIDGE(name) \
+    static void timed_##name(void) { \
+        LARGE_INTEGER a, b; \
+        QueryPerformanceCounter(&a); \
+        name(); \
+        QueryPerformanceCounter(&b); \
+        if (!s_qpf) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); s_qpf = f.QuadPart; } \
+        InterlockedExchangeAdd64(&g_file_io_us, (b.QuadPart - a.QuadPart) * 1000000 / s_qpf); \
+    }
+TIMED_BRIDGE(bridge_NtCreateFile)
+TIMED_BRIDGE(bridge_NtOpenFile)
+TIMED_BRIDGE(bridge_NtReadFile)
+TIMED_BRIDGE(bridge_NtWriteFile)
+TIMED_BRIDGE(bridge_NtFlushBuffersFile)
+TIMED_BRIDGE(bridge_NtSetInformationFile)
+TIMED_BRIDGE(bridge_NtQueryDirectoryFile)
+TIMED_BRIDGE(bridge_NtDeleteFile)
+
 static bridge_func_t bridge_for_ordinal(ULONG ordinal)
 {
     switch (ordinal) {
@@ -9648,25 +9672,25 @@ static bridge_func_t bridge_for_ordinal(ULONG ordinal)
 
     /* File/Handle */
     case 187: return bridge_NtClose;
-    case 190: return bridge_NtCreateFile;
+    case 190: return timed_bridge_NtCreateFile;
     case 279: return bridge_RtlEqualString;
     case 289: return bridge_RtlInitAnsiString;
-    case 195: return bridge_NtDeleteFile;
+    case 195: return timed_bridge_NtDeleteFile;
     case 196: return bridge_NtDeviceIoControlFile;
-    case 198: return bridge_NtFlushBuffersFile;
+    case 198: return timed_bridge_NtFlushBuffersFile;
     case 200: return bridge_NtFsControlFile;
-    case 202: return bridge_NtOpenFile;
+    case 202: return timed_bridge_NtOpenFile;
     case 203: return bridge_NtOpenSymbolicLinkObject;
-    case 207: return bridge_NtQueryDirectoryFile;
+    case 207: return timed_bridge_NtQueryDirectoryFile;
     case 210: return bridge_NtQueryFullAttributesFile;
     case 211: return bridge_NtQueryInformationFile;
     case 218: return bridge_NtQueryVolumeInformationFile;
-    case 219: return bridge_NtReadFile;
+    case 219: return timed_bridge_NtReadFile;
     case 312: return bridge_RtlUnwind;
     case 327: return bridge_XeLoadSection;
     case 328: return bridge_XeUnloadSection;
-    case 226: return bridge_NtSetInformationFile;
-    case 236: return bridge_NtWriteFile;
+    case 226: return timed_bridge_NtSetInformationFile;
+    case 236: return timed_bridge_NtWriteFile;
 
     /* Memory - contiguous */
     case 165: return bridge_MmAllocateContiguousMemory;

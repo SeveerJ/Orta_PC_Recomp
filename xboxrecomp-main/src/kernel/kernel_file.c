@@ -185,8 +185,21 @@ NTSTATUS __stdcall xbox_NtCreateFile(
             xbox_share_to_win32(ShareAccess), NULL, OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS, NULL);
     } else {
-        if (CreateOptions & XBOX_FILE_NO_INTERMEDIATE_BUFFERING)
-            flags_and_attrs |= FILE_FLAG_NO_BUFFERING;
+        /* The console asks for unbuffered I/O on its own disc and disk. On
+         * a PC that bypasses Windows' file cache, so every read of a disc
+         * file -- the same ones, level after level -- and every cache copy
+         * waits on the drive itself, which on a hard disk shows up as the
+         * game hitching while it loads. Buffered I/O takes the same aligned
+         * requests, so it is used unless RECOMP_NO_BUFFERING=1. */
+        if (CreateOptions & XBOX_FILE_NO_INTERMEDIATE_BUFFERING) {
+            static int unbuffered = -1;
+            if (unbuffered < 0) {
+                const char *e = getenv("RECOMP_NO_BUFFERING");
+                unbuffered = e && *e == '1';
+            }
+            if (unbuffered)
+                flags_and_attrs |= FILE_FLAG_NO_BUFFERING;
+        }
         if (FileAttributes & XBOX_FILE_ATTRIBUTE_READONLY)
             flags_and_attrs |= FILE_ATTRIBUTE_READONLY;
         h = CreateFileW(win_path, xbox_access_to_win32(DesiredAccess),
@@ -568,9 +581,32 @@ NTSTATUS __stdcall xbox_NtQueryVolumeInformationFile(
     }
 }
 
+/* Flushes counted for the hitch report; cache-drive ones skipped.
+ *
+ * Orta copies each disc file to its cache drive the first time it needs it
+ * and flushes the copy before renaming it into place. On the console that is
+ * a cheap write to its own disk; here FlushFileBuffers waits for the host
+ * drive to commit, which on a hard disk is tens of milliseconds each, inside
+ * the game's loading. The cache is only a cache -- the game re-copies a file
+ * it can't use -- so its flushes are skipped; saves still flush.
+ * RECOMP_FLUSH_CACHE=1 flushes everything as before. */
+volatile LONG g_file_flushes, g_file_flushes_skipped;
+
 NTSTATUS __stdcall xbox_NtFlushBuffersFile(HANDLE FileHandle, PXBOX_IO_STATUS_BLOCK IoStatusBlock)
 {
-    FlushFileBuffers(FileHandle);
+    static int flush_all = -1;
+    WCHAR p[MAX_PATH + 8];
+    DWORD n;
+    if (flush_all < 0) {
+        const char *e = getenv("RECOMP_FLUSH_CACHE");
+        flush_all = e && *e == '1';
+    }
+    InterlockedIncrement(&g_file_flushes);
+    n = flush_all ? 0 : GetFinalPathNameByHandleW(FileHandle, p, MAX_PATH, 0);
+    if (n && n < MAX_PATH && xbox_path_is_cache(p))
+        InterlockedIncrement(&g_file_flushes_skipped);
+    else
+        FlushFileBuffers(FileHandle);
     if (IoStatusBlock) {
         IoStatusBlock->Status = STATUS_SUCCESS;
         IoStatusBlock->Information = 0;

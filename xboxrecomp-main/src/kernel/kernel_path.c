@@ -270,6 +270,25 @@ static BOOL xbox_partition_device_path(const char *xbox_path, WCHAR *out, DWORD 
     return TRUE;
 }
 
+/* Is this host path (as GetFinalPathNameByHandleW gives it, with its
+ * \\?\ prefix) on one of the cache drives: save_dir\Cache, or a
+ * Partition3-5 image? */
+int xbox_path_is_cache(const WCHAR *p)
+{
+    size_t n = wcslen(s_save_dir);
+    if (!n)
+        return 0;
+    if (!wcsncmp(p, L"\\\\?\\", 4))
+        p += 4;
+    if (_wcsnicmp(p, s_save_dir, n) || p[n] != L'\\')
+        return 0;
+    p += n + 1;
+    return !_wcsnicmp(p, L"Cache\\", 6) ||
+           !_wcsnicmp(p, L"Partition3.img", 14) ||
+           !_wcsnicmp(p, L"Partition4.img", 14) ||
+           !_wcsnicmp(p, L"Partition5.img", 14);
+}
+
 void xbox_path_init(const char* game_dir, const char* save_dir)
 {
     WCHAR save_base[MAX_PATH];

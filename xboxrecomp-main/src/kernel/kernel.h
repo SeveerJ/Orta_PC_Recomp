@@ -691,6 +691,9 @@ NTSTATUS __stdcall xbox_NtQueryVolumeInformationFile(
     PVOID FsInformation, ULONG Length, XBOX_FS_INFORMATION_CLASS FsInformationClass);
 
 NTSTATUS __stdcall xbox_NtFlushBuffersFile(HANDLE FileHandle, PXBOX_IO_STATUS_BLOCK IoStatusBlock);
+int xbox_path_is_cache(const wchar_t *host_path);   /* kernel_path.c */
+extern volatile LONG g_file_flushes, g_file_flushes_skipped;   /* kernel_file.c */
+extern volatile LONG64 g_file_io_us;                        /* kernel_bridge.c */
 
 NTSTATUS __stdcall xbox_NtQueryFullAttributesFile(
     PXBOX_OBJECT_ATTRIBUTES ObjectAttributes,
