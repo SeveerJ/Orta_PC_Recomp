@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0
+## 0.7.1
 
 ### Fixes
 - **Last boss** now disappears under the water as it should: the Xbox's
