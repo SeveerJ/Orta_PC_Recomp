@@ -36,6 +36,7 @@ extern int  (*g_wndproc_hook)(HWND, UINT, WPARAM, LPARAM);
 extern int  xbox_FramebufferIsFullscreen(void);
 extern HWND xbox_FramebufferWindowHwnd(void);
 extern volatile float g_apu_gain_master, g_apu_gain_music, g_apu_gain_sfx;
+extern volatile long  g_capture_req;          /* nv2a_pb_exec.c: F11's capture */
 extern volatile long  g_apu_mute;
 /* recomp_manual.c */
 extern volatile float g_rumble_scale;         /* -1: settings.ini */
@@ -848,6 +849,16 @@ static void draw_menu(float W, float H)
     ImGui::SameLine();
     if (ImGui::Button("Quit game"))
         ImGui::OpenPopup("Quit?");
+    ImGui::SameLine();
+    /* F11's graphics capture, for controller-only players (Steam Deck): the
+     * game is paused while the menu is open, so this closes the menu and the
+     * capture takes the first frame drawn after it. */
+    if (ImGui::Button("Save graphics capture")) {
+        if (!g_capture_req)
+            g_capture_req = 1;
+        fprintf(stderr, "[OVERLAY] graphics capture requested from the menu\n");
+        ovl_set_open(0);
+    }
     ImGui::SameLine(0, st.ItemSpacing.x * 3);
     ImGui::AlignTextToFramePadding();
     ImGui::PushFont(s_font_small);

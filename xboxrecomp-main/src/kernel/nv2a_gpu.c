@@ -604,7 +604,7 @@ static const char s_hlsl_vsh[] =
 "  else if (m == 0x801 || m == 0x803) f = px + exp2(-d * d * py * py * 32.0) - 1.5;\n"
 "  else f = px + d * py - 1.0;\n"
 "  if (m == 0x802 || m == 0x803 || m == 0x804) f = abs(f);\n"
-"  if (isnan(f)) f = 1.0;\n"
+"  if ((asuint(f) & 0x7FFFFFFFu) > 0x7F800000u) f = 1.0;\n"   /* isnan(): Wine's compiler lacks it */
 "  return saturate(f);\n"
 "}\n"
 "float4 ffrow(uint b, float4 v) {\n"
@@ -797,6 +797,9 @@ static const char s_hlsl_vsh[] =
 /* Points and lines become quads here: a point a square of its size about
  * its centre (stage 3 coordinates across it for sprites, as xemu's
  * gl_PointCoord), a line a strip one guest pixel wide. */
+/* The geometry shaders sit behind VS_ONLY so vs_prog can be compiled without
+ * them: Wine's compiler (Proton) rejects the whole file over GS syntax. */
+"#ifndef VS_ONLY\n"
 "[maxvertexcount(4)]\n"
 "void gs_pt(point VSIO v[1], inout TriangleStream<VSIO> s) {\n"
 "  VSIO o = v[0];\n"
@@ -822,7 +825,26 @@ static const char s_hlsl_vsh[] =
 "  o = v[1];\n"
 "  o.pos = b + float4(n * b.w, 0, 0); s.Append(o);\n"
 "  o.pos = b - float4(n * b.w, 0, 0); s.Append(o);\n"
-"}\n";
+"}\n"
+"#endif\n";
+
+/* vs_prog's source: the file above with the geometry shaders left out. */
+static const char *vsh_vs_src(size_t *len)
+{
+    static char *s;
+    static size_t n;
+    static const char pre[] = "#define VS_ONLY 1\n";
+    if (!s) {
+        char *b = (char *)malloc(sizeof pre - 1 + sizeof s_hlsl_vsh);
+        if (!b) { *len = sizeof s_hlsl_vsh - 1; return s_hlsl_vsh; }
+        memcpy(b, pre, sizeof pre - 1);
+        memcpy(b + sizeof pre - 1, s_hlsl_vsh, sizeof s_hlsl_vsh);
+        n = sizeof pre - 1 + sizeof s_hlsl_vsh - 1;
+        s = b;
+    }
+    *len = n;
+    return s;
+}
 
 typedef struct {
     uint32_t prog[136][4];
@@ -1062,6 +1084,44 @@ static PfnCreateBlob s_create_blob;
 static char s_cache_dir[MAX_PATH];
 static int s_cache_on = -1;
 #define SHADER_CACHE_VERSION 1u
+/* Which compiler built a cache entry is part of its key: 1 = the Microsoft
+ * compiler shipped next to the exe, 0 = whatever d3dcompiler_47 the system
+ * has (under Proton that is Wine's, whose output must not be reused). */
+static unsigned s_comp_id;
+
+/* The shader compiler. Microsoft's d3dcompiler_47, shipped next to the exe
+ * under its own name so Wine cannot substitute its built-in one: Wine's HLSL
+ * compiler crashes or runs for many minutes on the combiner and vertex
+ * program shaders. RECOMP_SYSTEM_SHADER_COMPILER=1 uses the system's. */
+static HMODULE load_shader_compiler(void)
+{
+    static HMODULE dc;
+    static int done;
+    if (!done) {
+        const char *sys = getenv("RECOMP_SYSTEM_SHADER_COMPILER");
+        wchar_t path[MAX_PATH + 40];
+        DWORD n = GetModuleFileNameW(NULL, path, MAX_PATH);
+        done = 1;
+        if (!(sys && *sys == '1') && n && n < MAX_PATH) {
+            wchar_t *slash = wcsrchr(path, L'\\');
+            if (slash) {
+                wcscpy(slash + 1, L"d3dcompiler_47_ms.dll");
+                dc = LoadLibraryW(path);
+            }
+        }
+        if (dc) {
+            s_comp_id = 1;
+            fprintf(stderr, "  [GPU11] shader compiler: Microsoft's, shipped with the game\n");
+        } else {
+            dc = LoadLibraryA("d3dcompiler_47.dll");
+            if (!dc) dc = LoadLibraryA("d3dcompiler_46.dll");
+            if (!dc) dc = LoadLibraryA("d3dcompiler_43.dll");
+            fprintf(stderr, "  [GPU11] shader compiler: the system's%s\n",
+                    dc ? "" : " (none found)");
+        }
+    }
+    return dc;
+}
 
 static uint64_t fnv64(uint64_t h, const void *p, size_t n)
 {
@@ -1101,6 +1161,8 @@ static void cache_path(char *out, size_t cap, const char *src, size_t len,
     uint64_t h = 14695981039346656037ull;
     unsigned v = SHADER_CACHE_VERSION;
     h = fnv64(h, &v, sizeof v);
+    if (s_comp_id)
+        h = fnv64(h, &s_comp_id, sizeof s_comp_id);
     h = fnv64(h, entry, strlen(entry) + 1);
     h = fnv64(h, target, strlen(target) + 1);
     h = fnv64(h, &len, sizeof len);
@@ -1311,7 +1373,7 @@ static void prewarm_spec_all(void)
 
 int nv2a_gpu_prewarm_shaders(void)
 {
-    static const PrewarmJob jobs[] = {
+    PrewarmJob jobs[] = {
         { s_hlsl,      sizeof s_hlsl - 1,      "vs_main",    "vs_5_0" },
         { s_hlsl,      sizeof s_hlsl - 1,      "ps_main",    "ps_5_0" },
         { s_hlsl,      sizeof s_hlsl - 1,      "ps_zoff",    "ps_5_0" },
@@ -1328,12 +1390,13 @@ int nv2a_gpu_prewarm_shaders(void)
     };
     enum { N = sizeof jobs / sizeof jobs[0] };
     HANDLE th[N];
-    HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
+    HMODULE dc = load_shader_compiler();
     int i, n = 0;
     if (!dc) return 0;
     s_prewarm_comp = (PfnCompile)(void *)GetProcAddress(dc, "D3DCompile");
     s_create_blob = (PfnCreateBlob)(void *)GetProcAddress(dc, "D3DCreateBlob");
     if (!s_prewarm_comp || !cache_ready()) return 0;
+    jobs[3].src = vsh_vs_src(&jobs[3].len);      /* vs_prog: without the GS */
     for (i = 0; i < N; i++) {
         th[n] = CreateThread(NULL, 0, prewarm_one, (LPVOID)&jobs[i], 0, NULL);
         if (th[n]) n++;
@@ -1349,7 +1412,9 @@ int nv2a_gpu_prewarm_shaders(void)
 
 static int vsh_init(PfnCompile comp)
 {
-    ID3DBlob *b = compile_src(comp, s_hlsl_vsh, sizeof s_hlsl_vsh - 1, "vs_prog", "vs_5_0");
+    size_t vlen;
+    const char *vsrc = vsh_vs_src(&vlen);
+    ID3DBlob *b = compile_src(comp, vsrc, vlen, "vs_prog", "vs_5_0");
     D3D11_INPUT_ELEMENT_DESC il[16];
     D3D11_BUFFER_DESC bd;
     HRESULT hr;
@@ -1444,9 +1509,7 @@ static int gpu_init(void)
         return 0;
     }
     create = (PFN_D3D11_CREATE_DEVICE)(void *)GetProcAddress(d3d, "D3D11CreateDevice");
-    dc = LoadLibraryA("d3dcompiler_47.dll");
-    if (!dc) dc = LoadLibraryA("d3dcompiler_46.dll");
-    if (!dc) dc = LoadLibraryA("d3dcompiler_43.dll");
+    dc = load_shader_compiler();
     comp = dc ? (PfnCompile)(void *)GetProcAddress(dc, "D3DCompile") : NULL;
     s_create_blob = dc ? (PfnCreateBlob)(void *)GetProcAddress(dc, "D3DCreateBlob") : NULL;
     if (!create || !comp) {

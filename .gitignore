@@ -52,3 +52,6 @@ last_translation.stamp
 *.user
 Thumbs.db
 .DS_Store
+
+# --- Microsoft redistributable (Windows SDK Redist\D3D\x64), shipped in the installer only ---
+orta/package/d3dcompiler_47_ms.dll
