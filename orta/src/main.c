@@ -779,6 +779,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         extern void recomp_name_thread(const char *name);
         recomp_name_thread("game");
     }
+    {   /* experimental ultrawide (RECOMP_ASPECT under [Advanced]) */
+        extern void orta_ultrawide_start(void);
+        orta_ultrawide_start();
+    }
 
     /* Step 4: Set game directory for file I/O path translation */
     {

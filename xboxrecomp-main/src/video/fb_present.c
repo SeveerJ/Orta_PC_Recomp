@@ -185,6 +185,27 @@ int xbox_FramebufferWidescreen(void)
     return ws;
 }
 
+/* The widescreen picture's shape as num:den: 16:9, unless RECOMP_ASPECT asks
+ * for a wider one ("21:9", "32:9" or a ratio such as "2.37"; experimental,
+ * the title has to widen its camera to match). 4:3 titles ignore it. */
+void xbox_FramebufferAspect(int *num, int *den)
+{
+    static int n, d;
+    if (!d) {
+        const char *e = getenv("RECOMP_ASPECT");
+        n = 16; d = 9;
+        if (e && *e) {
+            int a = 0, b = 0;
+            double f;
+            if (sscanf(e, "%d:%d", &a, &b) == 2 && a > 0 && b > 0) { n = a; d = b; }
+            else if ((f = atof(e)) > 1.0) { n = (int)(f * 1000.0 + 0.5); d = 1000; }
+            if (n * 9 < d * 16 || n > d * 4) { n = 16; d = 9; }   /* 16:9 .. 4:1 */
+        }
+    }
+    *num = n;
+    *den = d;
+}
+
 static void fb_dest_rect(HWND hwnd, RECT *dst)
 {
     RECT c;
@@ -193,8 +214,10 @@ static void fb_dest_rect(HWND hwnd, RECT *dst)
     cw = c.right - c.left; ch = c.bottom - c.top;
     if (cw <= 0 || ch <= 0) { SetRectEmpty(dst); return; }
     if (xbox_FramebufferWidescreen()) {
-        w = cw; h = cw * 9 / 16;
-        if (h > ch) { h = ch; w = ch * 16 / 9; }
+        int an, ad;
+        xbox_FramebufferAspect(&an, &ad);
+        w = cw; h = cw * ad / an;
+        if (h > ch) { h = ch; w = ch * an / ad; }
     } else {
         w = cw; h = cw * 3 / 4;
         if (h > ch) { h = ch; w = ch * 4 / 3; }
@@ -444,7 +467,9 @@ static DWORD WINAPI fb_thread(LPVOID unused)
         int wh = e ? atoi(e) : 720;
         if (wh < 240) wh = 240;
         r.left = 0; r.top = 0; r.bottom = wh;
-        r.right = xbox_FramebufferWidescreen() ? wh * 16 / 9 : wh * 4 / 3;
+        int an, ad;
+        xbox_FramebufferAspect(&an, &ad);
+        r.right = xbox_FramebufferWidescreen() ? wh * an / ad : wh * 4 / 3;
     }
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     hwnd = CreateWindowExA(0, "XboxRecompFramebuffer", "Xbox Recomp - Framebuffer",
@@ -587,4 +612,5 @@ int xbox_FramebufferKeyDown(int vk) { (void)vk; return 0; }
 void xbox_FramebufferWindowSetTitle(const uint16_t *n, int m) { (void)n; (void)m; }
 void xbox_FramebufferWindowFrameStats(uint32_t draws) { (void)draws; }
 int xbox_FramebufferWidescreen(void) { return 0; }
+void xbox_FramebufferAspect(int *num, int *den) { *num = 16; *den = 9; }
 #endif

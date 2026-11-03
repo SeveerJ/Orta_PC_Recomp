@@ -1243,3 +1243,67 @@ void sub_00221F10(void)
     }
     g_esp = sp + 12;
 }
+
+
+/* ── Ultrawide (experimental, RECOMP_ASPECT) ────────────────────────────
+ * In widescreen the game multiplies its horizontal aspect factor, the float
+ * at 0x342724 (1.0, or 0.909 for one display mode), by 4/3 -- 16:9 being
+ * 4:3 widened by 4/3 -- and flags it at 0x342754 (set up at 0x3D13D). Its
+ * renderer re-reads 0x342724 when it sets up a view (0x6721D, 0x443A4), so
+ * replacing 4/3 by aspect * 3/4 there widens the 3D view (more at the
+ * sides, not stretched). HUD code that also scales by 4/3 (0x2FD2B,
+ * 0xB7291) is left as it is: this is a first test. */
+#if defined(_WIN32)
+/* windows.h stays out of this file (see the declarations near the top). */
+__declspec(dllimport) void __stdcall Sleep(unsigned long);
+__declspec(dllimport) void * __stdcall CreateThread(void *, size_t, unsigned long (__stdcall *)(void *),
+                                                    void *, unsigned long, unsigned long *);
+__declspec(dllimport) int __stdcall CloseHandle(void *);
+static float s_uw_k;   /* the factor to apply instead of 4/3 */
+
+static int uw_near(float a, float b) { float d = a - b; return d < 0 ? -d < 1e-5f : d < 1e-5f; }
+
+static unsigned long __stdcall orta_ultrawide_thread(void *arg)
+{
+    static const float base[2] = { 1.0f, 0.909090936f };   /* 0x3F800000, 0x3F68BA2E */
+    int logged = 0;
+    (void)arg;
+    for (;;) {
+        Sleep(50);
+        if (GMEM32(0x00342754u) != 0) {
+            volatile float *f = (volatile float *)(g_xbox_mem_offset + (uintptr_t)0x00342724u);
+            float v = *f;
+            int k;
+            for (k = 0; k < 2; k++) {
+                if (uw_near(v, base[k] * (4.0f / 3.0f))) {
+                    *f = base[k] * s_uw_k;
+                    if (!logged++)
+                        fprintf(stderr, "[ASPECT] camera widened: factor %.4f -> %.4f\n",
+                                (double)v, (double)(base[k] * s_uw_k));
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+void orta_ultrawide_start(void)
+{
+    extern void xbox_FramebufferAspect(int *num, int *den);
+    extern int xbox_FramebufferWidescreen(void);
+    int n, d;
+    void *t;
+    if (!getenv("RECOMP_ASPECT") || !xbox_FramebufferWidescreen())
+        return;
+    xbox_FramebufferAspect(&n, &d);
+    if (n * 9 == d * 16)
+        return;                                   /* plain 16:9 */
+    s_uw_k = (float)n / (float)d * 0.75f;
+    fprintf(stderr, "[ASPECT] experimental %d:%d picture (camera factor %.4f instead of 4/3)\n",
+            n, d, (double)s_uw_k);
+    t = CreateThread(NULL, 0, orta_ultrawide_thread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+}
+#else
+void orta_ultrawide_start(void) {}
+#endif

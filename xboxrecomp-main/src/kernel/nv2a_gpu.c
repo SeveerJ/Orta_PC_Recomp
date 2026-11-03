@@ -3316,6 +3316,7 @@ void nv2a_gpu_clear(const Nv2aGpuState *st, int color, uint32_t argb,
  * memory still gets its 640x480 copy (screenshots, titles that read it). */
 extern HWND xbox_FramebufferWindowHwnd(void);
 extern int xbox_FramebufferWidescreen(void);
+extern void xbox_FramebufferAspect(int *num, int *den);
 extern void xbox_FramebufferGpuPresented(void);
 
 static const GUID k_IID_IDXGIDevice =
@@ -3607,8 +3608,10 @@ static void gpu_present(GSurf *s)
     }
     ID3D11DeviceContext_ClearRenderTargetView(G.ctx, G.bb_rtv, black);
     if (xbox_FramebufferWidescreen()) {
-        w = cw; h = cw * 9 / 16;
-        if (h > ch) { h = ch; w = ch * 16 / 9; }
+        int an, ad;
+        xbox_FramebufferAspect(&an, &ad);
+        w = cw; h = cw * ad / an;
+        if (h > ch) { h = ch; w = ch * an / ad; }
     } else {
         w = cw; h = cw * 3 / 4;
         if (h > ch) { h = ch; w = ch * 4 / 3; }
