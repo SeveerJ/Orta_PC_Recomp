@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.8.0-experimental
+
+### New
+- **New launcher,** styled after the game's own option menus: pages for
+  Video, Sound and Launcher, a description of every setting with its
+  default, a green mark on anything changed, and full controller support
+  (D-pad/stick, LB/RB for pages, A or Start to play).
+- **5.1 surround uses the game's own Dolby Digital mode:** with Speakers = 5.1
+  the game places sounds across all six speakers itself, as on an Xbox set to
+  Dolby Digital. Tested on a home-theatre system.
+- **Ultrawide (experimental):** `RECOMP_ASPECT = 21:9` (or `32:9`) under
+  `[Advanced]` widens the 3D view instead of stretching it. The HUD and menus
+  are still stretched in this first version.
+- **"Save graphics capture"** in the F1 menu (the same as F11), for players
+  on a controller or Steam Deck.
+
+### Fixes
+- **Steam Deck / Proton:** the game now ships Microsoft's shader compiler
+  instead of relying on Wine's, which crashed or took many minutes on the
+  game's graphics shaders (the likely cause of black cutscenes, glitches and
+  low frame rates on the Deck).
+- **Low-end PCs:** the faster per-effect graphics shaders are built about twice
+  as fast, on three background threads, and Setup now builds 129 of them in
+  advance. A ThinkPad T495 went from about 15-20 fps to 30-50 fps in play.
+
+### Notes
+- The shader cache is rebuilt once after updating (Setup does this, so the
+  first start stays quick).
+- The installer now includes `d3dcompiler_47_ms.dll` (Microsoft's
+  redistributable shader compiler, from the Windows SDK) and two fonts for the
+  launcher (SIL Open Font License, see `FONTS_LICENSE.txt`).
+
 ## 0.7.1
 
 ### Fixes

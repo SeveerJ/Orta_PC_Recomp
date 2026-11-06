@@ -8,9 +8,10 @@ Built on [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) by sp00nznet
 (MIT, with xemu-derived parts under LGPL-2.1). Many GPU behaviours are matched
 against [xemu](https://xemu.app).
 
-> **Status:** work in progress. The game is once again playable from start to
-> finish on Windows, every episode through to the last boss, and the Pandora's
-> Box extras now run too.
+> **Status:** work in progress. The game is playable from start to finish on
+> Windows, every episode through to the last boss, and the Pandora's Box
+> extras run too. 0.8.0 adds a new launcher, 5.1 surround using the game's own
+> Dolby Digital mode, a Steam Deck/Proton fix and experimental ultrawide.
 > See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## You need your own copy of the game
@@ -20,7 +21,7 @@ no recompiled game code, no textures. You supply files from your own disc.
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit
+- Windows 10 or 11, 64-bit (Steam Deck and Linux through Proton)
 - A DirectX 11 graphics card
 - An Xbox controller or any XInput pad
 - Your own copy of Panzer Dragoon Orta
@@ -57,8 +58,9 @@ Download `OrtaPC_Setup.exe` from the Releases page and run it.
 ## Settings and files
 
 - **Launcher:** shown the first time the game starts (and whenever Shift is
-  held while it starts): resolution, display mode, widescreen, VSync, volume,
-  music, sound effects and speakers.
+  held while it starts), styled after the game's own option menus. Pages for
+  Video, Sound and Launcher; mouse, keyboard or controller (LB/RB switch
+  pages, A or Start plays).
 - **F1 menu** (or Back + Start on the pad) while playing: the same settings
   and more. Everything is saved to `settings.ini` next to the game.
 - **Anti-aliasing:** Off, FXAA (fast) or FXAA (high quality), in the launcher
@@ -67,6 +69,9 @@ Download `OrtaPC_Setup.exe` from the Releases page and run it.
   original mix, above 100 boosts). Speakers can be Stereo or 5.1; 5.1 tells the game it is on a
   Dolby Digital Xbox, so it places sounds across the six speakers itself (takes
   effect when the game next starts).
+- **Ultrawide (experimental):** add `RECOMP_ASPECT = 21:9` (or `32:9`) under
+  `[Advanced]` in settings.ini, with Widescreen on. The 3D view widens; the
+  HUD and menus are still stretched for now.
 - **Data folder** next to the game: the game's cache (`Data\Cache`), the
   compiled graphics shaders (`Data\shader_cache`) and the console's save
   areas. Deleting `Cache` and `shader_cache` gives the game a fresh start;
@@ -107,4 +112,8 @@ the pipeline in depth.
 Code from xboxrecomp keeps its MIT licence (`xboxrecomp-main/LICENSE`). The
 xemu-derived files keep their LGPL-2.1-or-later licence and notices
 (`xboxrecomp-main/NOTICE`, `xboxrecomp-main/LICENSES/`). Dear ImGui is MIT
-(`orta/third_party/imgui/LICENSE.txt`).
+(`orta/third_party/imgui/LICENSE.txt`). The launcher's fonts are modified
+versions of Orbitron and Exo 2 under the SIL Open Font License
+(`orta/package/FONTS_LICENSE.txt`). The installer also carries Microsoft's
+redistributable shader compiler (`d3dcompiler_47.dll` from the Windows SDK's
+Redist folder); it is not stored in this repository.

@@ -12,13 +12,13 @@
   and a pre-filled cache) is in progress.
 - **Pandora's Box:** the missions, scenarios, encyclopedia and box game now
   run; not every sub-episode has been played through yet.
-- **Slow on low-end PCs:** about 20 fps on a ThinkPad T495 at the original
-  480 resolution. The cause is known (graphics shaders that take too long to
-  build on a slow CPU, leaving a weak GPU on the slow general shader); a fix is
-  being tested.
-- **5.1:** sound from behind reaches the rear-left speaker a little and the
-  rear-right not at all, and nothing goes to the LFE. The Dolby Digital switch
-  is untested.
+- **Low-end PCs:** a ThinkPad T495 now plays at about 30-50 fps (480), with
+  short stutters the first time a new effect appears while its shader is built.
+- **Steam Deck / Proton:** the shader-compiler fix in 0.8.0 is untested on a
+  Deck so far; reports welcome.
+- **Ultrawide (experimental):** the HUD and menus are stretched.
+- **5.1:** the game itself sends nothing to the subwoofer channel; a receiver's
+  bass management covers it.
 
 
 ## Saving

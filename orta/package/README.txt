@@ -1,14 +1,14 @@
-PANZER DRAGOON ORTA - PC PLAYTEST BUILD (update 2)
-=================================================
+PANZER DRAGOON ORTA - PC BUILD 0.8.0 (experimental)
+==================================================
 
 Thanks for testing! This is the original Xbox game translated to run
 natively on Windows. It is a work in progress, so please note anything
 odd (see "Reporting problems" below).
 
 STARTING THE GAME
-  Double-click "Panzer Dragoon Orta.exe".
-  The first start takes about a minute before anything appears while the
-  game sets up its cache - that is normal. Later starts are quicker.
+  Double-click "Panzer Dragoon Orta.exe". The launcher opens the first
+  time (and whenever Shift is held as the game starts): choose your
+  settings, then Play.
 
 CONTROLS
   An Xbox controller (or any XInput pad) works as the original pad.
@@ -38,15 +38,13 @@ CACHES
   The first start after that takes a few minutes.
 
 WHAT'S NEW IN THIS BUILD
-  - Enemy and boss health is now right (the game had been told it was
-    running on a console from another region and used easier settings).
-  - Water reflections now look like the original.
-  - Hair and wings sit in the right place.
-  - Episode 2 boss no longer flickers on its dark patches.
-  - Episode 3 boss: proper shadow, and it runs at full speed.
-  - Sound effects are no longer too loud or crackly (see SfxVolume).
-  - Particle and sparkle effects that were missing are now drawn.
-  - New settings menu (F1).
+  - New launcher in the style of the game's option menus.
+  - Speakers = 5.1 uses the game's own Dolby Digital surround.
+  - Steam Deck / Proton: ships Microsoft's shader compiler.
+  - Smoother on low-end PCs (faster shader builds, more built by Setup).
+  - Experimental ultrawide: RECOMP_ASPECT = 21:9 (or 32:9) under
+    [Advanced] in settings.ini (the HUD is still stretched).
+  - F1 menu: "Save graphics capture" for controller players.
 
 KNOWN ISSUES
   - Episode 3: the octopus enemy's charged attack shows its hit marks near
